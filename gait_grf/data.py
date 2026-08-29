@@ -2,6 +2,7 @@
 
 import glob
 import os
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -27,26 +28,31 @@ def read_qualisys(path):
     return pd.read_csv(path)
 
 
-def total_pressure(sensor_df):
-    return sensor_df["right_pressure_sum"].to_numpy(dtype=float) + sensor_df[
-        "left_pressure_sum"
-    ].to_numpy(dtype=float)
+def pressure_diff(sensor_df):
+    """左右足压力差（left − right），对齐信号之一。"""
+    return (
+        sensor_df["left_pressure_sum"].to_numpy(dtype=float)
+        - sensor_df["right_pressure_sum"].to_numpy(dtype=float)
+    )
 
 
-def total_vertical_grf(qualisys_df):
-    return qualisys_df["ground_force_1_vz"].to_numpy(dtype=float) + qualisys_df[
-        "ground_force_2_vz"
-    ].to_numpy(dtype=float)
+def vertical_grf_diff(qualisys_df):
+    """双板垂直 GRF 差（f1_vy − f2_vy）。Qualisys 中 y 轴朝上（vy 为垂直分量）。"""
+    return (
+        qualisys_df["ground_force_1_vy"].to_numpy(dtype=float)
+        - qualisys_df["ground_force_2_vy"].to_numpy(dtype=float)
+    )
 
 
 def find_lag(sensor_df, qualisys_df, max_lag=DEFAULT_MAX_LAG):
     """返回 d，使得 sensor[i] ~ qualisys[i+d]。
 
-    d > 0 表示 sensor 滞后（延迟）；d < 0 表示 sensor 超前。
-    基于「压力之和 ↔ 垂直 GRF」的归一化互相关。
+    d > 0 表示 sensor 超前（leads）；d < 0 表示 sensor 滞后（lags）。
+    用「左右足压力差 ↔ 双板垂直 GRF 差」的归一化互相关（取绝对值最大）估计滞后；
+    两足在摆动相/支撑相各自振荡，差信号比「双足之和」更适合定位。
     """
-    p = total_pressure(sensor_df)
-    g = total_vertical_grf(qualisys_df)
+    p = pressure_diff(sensor_df)
+    g = vertical_grf_diff(qualisys_df)
     p = (p - p.mean()) / (p.std() + 1e-9)
     g = (g - g.mean()) / (g.std() + 1e-9)
     best_d, best = 0, -np.inf
@@ -61,9 +67,14 @@ def find_lag(sensor_df, qualisys_df, max_lag=DEFAULT_MAX_LAG):
         n = min(len(a), len(b))
         if n < 10:
             continue
-        score = float((a[:n] * b[:n]).mean())
+        score = abs(float((a[:n] * b[:n]).mean()))
         if score > best:
             best, best_d = score, d
+    if abs(best_d) == max_lag:
+        warnings.warn(
+            f"互相关滞后卡在搜索边界 ±{max_lag}，真实滞后可能在范围外",
+            stacklevel=2,
+        )
     return best_d
 
 

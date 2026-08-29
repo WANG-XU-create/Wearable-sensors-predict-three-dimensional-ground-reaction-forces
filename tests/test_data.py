@@ -68,10 +68,10 @@ class TestFindLag(unittest.TestCase):
         qual = _make_qualisys_df(n, rng)
         p = np.zeros(n)
         p[L:] = base[: n - L]
-        sensor["right_pressure_sum"] = p
-        sensor["left_pressure_sum"] = 0.0
-        qual["ground_force_1_vz"] = base
-        qual["ground_force_2_vz"] = 0.0
+        sensor["left_pressure_sum"] = p
+        sensor["right_pressure_sum"] = 0.0
+        qual["ground_force_1_vy"] = base
+        qual["ground_force_2_vy"] = 0.0
         self.assertEqual(find_lag(sensor, qual, max_lag=50), -L)
 
     def test_recovers_sensor_lead(self):
@@ -83,10 +83,10 @@ class TestFindLag(unittest.TestCase):
         qual = _make_qualisys_df(n, rng)
         g = np.zeros(n)
         g[L:] = base[: n - L]
-        sensor["right_pressure_sum"] = base
-        sensor["left_pressure_sum"] = 0.0
-        qual["ground_force_1_vz"] = g
-        qual["ground_force_2_vz"] = 0.0
+        sensor["left_pressure_sum"] = base
+        sensor["right_pressure_sum"] = 0.0
+        qual["ground_force_1_vy"] = g
+        qual["ground_force_2_vy"] = 0.0
         self.assertEqual(find_lag(sensor, qual, max_lag=50), L)
 
 
@@ -99,10 +99,10 @@ class TestAlign(unittest.TestCase):
         qual = _make_qualisys_df(n, rng)
         p = np.zeros(n)
         p[L:] = base[: n - L]
-        sensor["right_pressure_sum"] = p
-        sensor["left_pressure_sum"] = 0.0
-        qual["ground_force_1_vz"] = base
-        qual["ground_force_2_vz"] = 0.0
+        sensor["left_pressure_sum"] = p
+        sensor["right_pressure_sum"] = 0.0
+        qual["ground_force_1_vy"] = base
+        qual["ground_force_2_vy"] = 0.0
 
         s, q, lag = align(sensor, qual, max_lag=50)
         self.assertEqual(lag, -L)
@@ -161,10 +161,10 @@ class TestDataset(unittest.TestCase):
         sensor = _make_sensor_df(n, rng)
         qual = _make_qualisys_df(n, rng)
         base = _gait_like(n)
-        sensor["right_pressure_sum"] = base
-        sensor["left_pressure_sum"] = 0.0
-        qual["ground_force_1_vz"] = base
-        qual["ground_force_2_vz"] = 0.0
+        sensor["left_pressure_sum"] = base
+        sensor["right_pressure_sum"] = 0.0
+        qual["ground_force_1_vy"] = base
+        qual["ground_force_2_vy"] = 0.0
         # sentinel in a feature column to detect cross-trial mixing
         sensor["right_pressure0"] = float(sentinel)
         sp = os.path.join(root, f"sensor_{tag}.csv")
@@ -229,6 +229,28 @@ class TestDiscover(unittest.TestCase):
         for sp, qp in pairs[:3]:
             self.assertTrue(os.path.isfile(sp))
             self.assertTrue(os.path.isfile(qp))
+
+    def test_discovers_all_226_pairs(self):
+        root = "/root/autodl-tmp/data/subjectdata"
+        if not os.path.isdir(root):
+            self.skipTest("subjectdata 不存在")
+        pairs = discover_trial_pairs(root)
+        self.assertEqual(len(pairs), 226)
+
+
+class TestRealDataSmoke(unittest.TestCase):
+    def test_dataset_on_two_subjects(self):
+        root = "/root/autodl-tmp/data/subjectdata"
+        if not os.path.isdir(root):
+            self.skipTest("subjectdata 不存在")
+        pairs = discover_trial_pairs(root, subjects=["z1", "z3"])
+        ds = GRFSequenceDataset(pairs, window=100, step=10)
+        self.assertGreater(len(ds), 0)
+        X, y = ds[0]
+        self.assertEqual(tuple(X.shape), (100, 120))
+        self.assertEqual(tuple(y.shape), (100, 6))
+        self.assertTrue(np.isfinite(ds.X).all())
+        self.assertTrue(np.isfinite(ds.y).all())
 
 
 if __name__ == "__main__":
