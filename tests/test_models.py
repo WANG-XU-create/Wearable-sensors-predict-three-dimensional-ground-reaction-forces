@@ -37,6 +37,16 @@ class TestShapes(unittest.TestCase):
         with self.assertRaises(ValueError):
             make_model("gru", input_size=F)
 
+    def test_tcn_kernel_passthrough(self):
+        # kernel 透传到 GaitTCN：核宽变化应改变参数量；非 TCN 模型忽略 kernel
+        m5 = make_model("tcn", input_size=16, hidden=24, layers=2, kernel=5)
+        m3 = make_model("tcn", input_size=16, hidden=24, layers=2, kernel=3)
+        p = lambda m: sum(x.numel() for x in m.parameters())
+        self.assertNotEqual(p(m5), p(m3))
+        n = make_model("lstm", input_size=16, hidden=24, layers=2, kernel=3)
+        ref = make_model("lstm", input_size=16, hidden=24, layers=2)
+        self.assertEqual(p(n), p(ref))
+
 
 class TestTCNCausal(unittest.TestCase):
     def test_future_perturbation_does_not_affect_past_outputs(self):

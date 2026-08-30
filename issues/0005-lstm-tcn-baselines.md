@@ -3,7 +3,7 @@ id: 0005
 title: "LSTM/TCN 基线：接入 train.py --model，与 LTC 公平对比"
 status: open          # open | closed
 labels: [ready-for-agent]
-assignee: ""          # 空 = 未分配；claim 时填名字
+assignee: claude       # 空 = 未分配；claim 时填名字
 blocked_by: []        # 被哪些 issue 阻塞
 part_of: ""           # 若为 wayfinder child，填 map 的编号
 created: 2026-08-30
@@ -29,3 +29,7 @@ updated: 2026-08-30
 **注意**：GPU 正在跑 #4，LSTM/TCN 的完整 LOSO 应在 #4 结束后再排队（避免抢 GPU）；接入代码本身现在就可以做，不受影响。
 
 ## Comments
+
+### @claude - 2026-08-30
+
+已 claim。待办 1 已在 f077caf 完成：`train.py` 改用 `make_model`，`--model` 已支持 `ltc/lstm/tcn`，`models.py` 同提交（GaitLSTM/GaitTCN + 因果性测试，33 测试全绿）。待办 2（TCN kernel CLI 透传）实现中；待办 3（基线 LOSO 运行）按票面注意排在 #4 结束后。

@@ -125,6 +125,7 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
         hidden=cfg["hidden"],
         layers=cfg["layers"],
         dropout=cfg["dropout"],
+        kernel=cfg.get("kernel", 5),
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     loss_fn = torch.nn.MSELoss()
@@ -377,6 +378,12 @@ def main(argv=None):
     parser.add_argument("--hidden", type=int, default=32, help="LTC 隐层大小")
     parser.add_argument("--layers", type=int, default=1, help="LTC 层数")
     parser.add_argument("--dropout", type=float, default=0.0, help="dropout 概率")
+    parser.add_argument(
+        "--kernel",
+        type=int,
+        default=5,
+        help="TCN 卷积核宽（仅 --model tcn 使用）",
+    )
     parser.add_argument("--epochs", type=int, default=5, help="最大训练轮数")
     parser.add_argument(
         "--patience",
@@ -412,6 +419,7 @@ def main(argv=None):
         "hidden": args.hidden,
         "layers": args.layers,
         "dropout": args.dropout,
+        "kernel": args.kernel,
         "epochs": args.epochs,
         "patience": args.patience,
         "batch_size": args.batch_size,

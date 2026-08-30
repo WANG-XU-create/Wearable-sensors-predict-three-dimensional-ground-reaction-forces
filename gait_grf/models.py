@@ -114,8 +114,10 @@ class GaitTCN(nn.Module):
 MODELS = {"ltc": GaitLTC, "lstm": GaitLSTM, "tcn": GaitTCN}
 
 
-def make_model(name, input_size, output_size=6, hidden=32, layers=1, dropout=0.0):
-    """按名字构造模型；TCN 额外接受 kernel（经 kwargs 透传）。"""
+def make_model(name, input_size, output_size=6, hidden=32, layers=1, dropout=0.0, kernel=5):
+    """按名字构造模型；kernel 仅 TCN 使用（卷积核宽，决定感受野）。"""
     if name not in MODELS:
         raise ValueError(f"未知模型 {name!r}，可选：{sorted(MODELS)}")
+    if name == "tcn":
+        return GaitTCN(input_size, output_size, hidden, layers, dropout, kernel=kernel)
     return MODELS[name](input_size, output_size, hidden, layers, dropout)

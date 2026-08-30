@@ -3,7 +3,7 @@ id: 0004
 title: "完整 LTC 训练：hidden 128 × 2 层、dropout 0.3、LOSO 8 折"
 status: open          # open | closed
 labels: []            # 正在后台训练，非 triage 状态
-assignee: ""          # 空 = 未分配；claim 时填名字
+assignee: claude       # 空 = 未分配；claim 时填名字
 blocked_by: []        # 被哪些 issue 阻塞
 part_of: ""           # 若为 wayfinder child，填 map 的编号
 created: 2026-08-30
@@ -33,3 +33,9 @@ fold1（约 29 分钟）已完成，8 折预计共 3.5–4 小时；`metrics.csv
 **验收**：`metrics.csv` 8 行齐全、无 NaN；对比 tracer 基线（合成幅值 r 0.70–0.91，z7 最弱），确认 hidden128×2 是否带来提升。
 
 ## Comments
+
+### @claude - 2026-08-30
+
+已 claim。训练在后台进行（task: `python -u -m gait_grf.train --data-root data/subjectdata --out-dir runs/ltc_full_loso8 --hidden 128 --layers 2 --dropout 0.3 --epochs 100 --patience 10`）。
+
+fold 1/8 完成：42 轮早停（best_epoch=32），val loss 0.2244（对比 tracer 配置收敛值 ~0.35–0.42，明显更低）。早停/权重恢复/逐折 checkpoint（`model_fold1_z1.pt`）均按设计工作。等 8 折齐后对照验收标准核对并关闭。
