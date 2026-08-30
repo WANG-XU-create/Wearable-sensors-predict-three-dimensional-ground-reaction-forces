@@ -9,9 +9,11 @@ import unittest
 
 import numpy as np
 import pandas as pd
+import torch
 
 from gait_grf.constants import FEATURE_COLS, LEFT_FOOT_PLATE, PLATE_TARGET_COLS, TARGET_COLS
-from gait_grf.train import split_val_trials
+from gait_grf.data import discover_trial_pairs
+from gait_grf.train import split_val_trials, train_one_fold
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -103,6 +105,40 @@ class TestSplitValTrials(unittest.TestCase):
         self.assertEqual(a, b)
 
 
+class TestEarlyStopping(unittest.TestCase):
+    def test_stops_when_val_does_not_improve(self):
+        # lr=0 -> 权重不变 -> 每轮验证损失逐位相同 -> 第 patience+1 轮触发早停
+        with tempfile.TemporaryDirectory() as d:
+            rng = np.random.default_rng(5)
+            _write_subject_fixture(d, "z1", "LQW", 4, rng)
+            pairs = discover_trial_pairs(d, subjects=["z1"])
+            fit, val = split_val_trials(pairs, 0.25, np.random.default_rng(0))
+            cfg = {
+                "window": 100, "step": 10, "hidden": 8, "layers": 1,
+                "dropout": 0.0, "epochs": 50, "patience": 3,
+                "batch_size": 8, "lr": 0.0,
+            }
+            _, _, history = train_one_fold(fit, val, cfg, torch.device("cpu"))
+            self.assertEqual(len(history), 4)  # 第1轮最优，第4轮停止
+            self.assertEqual(history[-1]["best_epoch"], 1)
+            self.assertIn("best_val_loss", history[-1])
+
+    def test_no_early_stop_with_zero_patience(self):
+        # patience=0 表示不早停：跑满全部轮数
+        with tempfile.TemporaryDirectory() as d:
+            rng = np.random.default_rng(5)
+            _write_subject_fixture(d, "z1", "LQW", 4, rng)
+            pairs = discover_trial_pairs(d, subjects=["z1"])
+            fit, val = split_val_trials(pairs, 0.25, np.random.default_rng(0))
+            cfg = {
+                "window": 100, "step": 10, "hidden": 8, "layers": 1,
+                "dropout": 0.0, "epochs": 3, "patience": 0,
+                "batch_size": 8, "lr": 0.0,
+            }
+            _, _, history = train_one_fold(fit, val, cfg, torch.device("cpu"))
+            self.assertEqual(len(history), 3)
+
+
 class TestTrainerEndToEnd(unittest.TestCase):
     """入口命令在 2 受试者 fixture 上跑通 LOSO tracer bullet。"""
 
@@ -127,6 +163,7 @@ class TestTrainerEndToEnd(unittest.TestCase):
                 "--subjects", "z1", "z3", "z6",
                 "--hidden", "16",
                 "--epochs", "5",
+                "--patience", "3",
                 "--batch-size", "8",
                 "--device", "cpu",
             ],
@@ -149,6 +186,11 @@ class TestTrainerEndToEnd(unittest.TestCase):
                      "predictions_z3.png", "predictions_z6.png"):
             path = os.path.join(self.out_dir, name)
             self.assertTrue(os.path.isfile(path), f"缺少输出文件 {name}")
+            self.assertGreater(os.path.getsize(path), 0, f"{name} 为空文件")
+        # 每折保存最优 checkpoint（权重 + scaler + 配置）
+        for name in ("model_fold1_z1.pt", "model_fold2_z3.pt", "model_fold3_z6.pt"):
+            path = os.path.join(self.out_dir, name)
+            self.assertTrue(os.path.isfile(path), f"缺少 checkpoint {name}")
             self.assertGreater(os.path.getsize(path), 0, f"{name} 为空文件")
 
     def test_metrics_schema_and_finite(self):

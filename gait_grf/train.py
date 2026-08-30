@@ -1,17 +1,22 @@
-"""端到端训练/评估入口（tracer bullet，ticket #3）。
+"""端到端训练/评估入口（ticket #3 tracer，#4 扩展为完整 LTC 训练）。
 
 单入口命令：发现 trial 对 -> LOSO（折数=受试者数，每折测试集=留出受试者的
-全部 trial，训练受试者内 trial 级随机留 15% 做验证）-> 训练最小 LTC ->
-逐 trial 预测 -> 每折指标 + 预测对比图。
+全部 trial，训练受试者内 trial 级随机留 15% 做验证）-> 训练 LTC（验证损失
+早停 + 恢复最优权重）-> 逐 trial 预测 -> 每折指标 + 预测对比图。
 
 用法：
-    python -m gait_grf.train --data-root data/subjectdata --out-dir runs/tracer
+    python -m gait_grf.train --data-root data/subjectdata --out-dir runs/ltc_full \
+        --hidden 128 --layers 2 --dropout 0.3 --epochs 100
 
 输出（写入 out-dir）：
-    metrics.csv            每折一行：6 个 GRF 输出列的 RMSE(N) + 合成幅值
-                           RMSE(N) + Pearson r + 测试规模
-    summary.json           配置、每折 trial 明细与训练历史、跨折汇总
-    predictions_<z>.png    每折一张代表 trial 的预测 vs 真实对比图
+    metrics.csv              每折一行：6 个 GRF 输出列的 RMSE(N) + 合成幅值
+                             RMSE(N) + Pearson r + 测试规模
+    summary.json             配置、每折 trial 明细与训练历史、跨折汇总
+    predictions_<z>.png      每折一张代表 trial 的预测 vs 真实对比图
+    model_fold<n>_<z>.pt     每折最优 checkpoint（权重 + scaler + 配置），
+                             供后续分析/可视化复用
+
+trial 的读取+对齐结果在进程内缓存（LOSO 各折复用同一批 trial，对齐确定性）。
 """
 
 import argparse
@@ -31,18 +36,13 @@ from .constants import (
     DEFAULT_REFINE_RADIUS,
     DEFAULT_STEP,
     DEFAULT_WINDOW,
-    LEFT_FOOT_PLATE,
     SUBJECT_MAP,
     TARGET_COLS,
 )
 from .data import (
     GRFSequenceDataset,
-    align,
     discover_trial_pairs,
-    extract_features,
-    extract_targets,
-    read_qualisys,
-    read_sensor,
+    load_aligned_trial,
     window_trial,
 )
 from .models import GaitLTC
@@ -95,7 +95,11 @@ def _batched_forward(model, X, device, batch_size):
 
 
 def train_one_fold(fit_pairs, val_pairs, cfg, device):
-    """训练一折：fit trial 上拟合 scaler 并训练，val trial 上监控损失。"""
+    """训练一折：fit trial 上拟合 scaler 并训练，val trial 上监控损失。
+
+    验证损失连续 cfg["patience"] 轮不创新低则早停，并恢复最优权重。
+    返回 (model, scalers, history)；history 末项含 best_epoch。
+    """
     fit_ds = GRFSequenceDataset(
         fit_pairs, window=cfg["window"], step=cfg["step"]
     )
@@ -124,6 +128,9 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
     loss_fn = torch.nn.MSELoss()
 
     history = []
+    best_val = float("inf")
+    best_epoch = 0
+    best_state = None
     for epoch in range(1, cfg["epochs"] + 1):
         model.train()
         perm = torch.randperm(len(X))
@@ -145,7 +152,20 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
             entry["val_loss"] = float(
                 np.mean((val_pred - val_ds.y) ** 2)
             )
+            if entry["val_loss"] < best_val:
+                best_val = entry["val_loss"]
+                best_epoch = epoch
+                best_state = {
+                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                }
+            elif cfg["patience"] > 0 and epoch - best_epoch >= cfg["patience"]:
+                history.append(entry)
+                break
         history.append(entry)
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        history[-1]["best_epoch"] = best_epoch
+        history[-1]["best_val_loss"] = best_val
     return model, scalers, history
 
 
@@ -156,11 +176,9 @@ def predict_trial(model, scalers, sensor_path, qualisys_path, subject, cfg, devi
     （= window + (n_windows-1)*step，trial 尾部不足一个步进的帧不参与评估）。
     """
     feature_scaler, target_scaler = scalers
-    sensor, qual, _ = align(
-        read_sensor(sensor_path), read_qualisys(qualisys_path), cfg["refine_radius"]
+    feats, targets = load_aligned_trial(
+        sensor_path, qualisys_path, subject, cfg["refine_radius"]
     )
-    feats = extract_features(sensor)
-    targets = extract_targets(qual, left_plate=LEFT_FOOT_PLATE[subject])
     Xw, _ = window_trial(feats, targets, cfg["window"], cfg["step"])
     if len(Xw) == 0:
         return None
@@ -243,19 +261,41 @@ def plot_fold_prediction(out_path, pred, true, test_subject, trial_name):
     plt.close(fig)
 
 
-def run_loso(trials, cfg, device):
+def run_loso(trials, cfg, device, out_dir=None):
     """LOSO：折数=受试者数，每折测试集=留出受试者的全部 trial。
 
+    给定 out_dir 时，每折保存最优 checkpoint（模型权重 + scaler + 配置）为
+    model_fold{n}_{test_z}.pt，供后续分析/可视化复用，无需重训。
     返回 (fold_rows, fold_details, reps)：reps 是每折代表 trial（窗口数最多）
     的 (test_subject, trial_name, pred_N, true_N)，供绘图。
     """
     subjects = sorted(trials)
+    n_folds = len(subjects)
     fold_rows, fold_details, reps = [], [], []
     for fold, test_z in enumerate(subjects, start=1):
         train_pairs = [p for z in subjects if z != test_z for p in trials[z]]
         fit_pairs, val_pairs = split_val_trials(train_pairs, cfg["val_frac"], cfg["rng"])
 
         model, scalers, history = train_one_fold(fit_pairs, val_pairs, cfg, device)
+        last = history[-1]
+        print(
+            f"[fold {fold}/{n_folds}] test={test_z}: "
+            f"epochs={len(history)} best_epoch={last.get('best_epoch', '-')} "
+            f"best_val={last.get('best_val_loss', float('nan')):.4f}",
+            flush=True,
+        )
+        if out_dir is not None:
+            os.makedirs(out_dir, exist_ok=True)
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "feature_scaler": scalers[0],
+                    "target_scaler": scalers[1],
+                    "config": {k: v for k, v in cfg.items() if k != "rng"},
+                    "test_subject": test_z,
+                },
+                os.path.join(out_dir, f"model_fold{fold}_{test_z}.pt"),
+            )
 
         preds, trues, trial_details = [], [], []
         for sp, qp, z in trials[test_z]:
@@ -335,7 +375,13 @@ def main(argv=None):
     parser.add_argument("--hidden", type=int, default=32, help="LTC 隐层大小")
     parser.add_argument("--layers", type=int, default=1, help="LTC 层数")
     parser.add_argument("--dropout", type=float, default=0.0, help="dropout 概率")
-    parser.add_argument("--epochs", type=int, default=5, help="训练轮数")
+    parser.add_argument("--epochs", type=int, default=5, help="最大训练轮数")
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=10,
+        help="验证损失连续多少轮不创新低则早停（0 表示不早停）",
+    )
     parser.add_argument("--batch-size", type=int, default=32, help="批大小")
     parser.add_argument("--lr", type=float, default=1e-3, help="学习率")
     parser.add_argument("--window", type=int, default=DEFAULT_WINDOW, help="滑窗帧数")
@@ -365,6 +411,7 @@ def main(argv=None):
         "layers": args.layers,
         "dropout": args.dropout,
         "epochs": args.epochs,
+        "patience": args.patience,
         "batch_size": args.batch_size,
         "lr": args.lr,
         "window": args.window,
@@ -379,12 +426,13 @@ def main(argv=None):
     subjects = sorted(trials)
     print(
         f"受试者 {len(subjects)} 人（{', '.join(subjects)}），"
-        f"共 {sum(len(v) for v in trials.values())} 个 trial；设备 {device}"
+        f"共 {sum(len(v) for v in trials.values())} 个 trial；设备 {device}",
+        flush=True,
     )
 
-    fold_rows, fold_details, reps = run_loso(trials, cfg, device)
-
     os.makedirs(args.out_dir, exist_ok=True)
+    fold_rows, fold_details, reps = run_loso(trials, cfg, device, out_dir=args.out_dir)
+
     metrics_path = os.path.join(args.out_dir, "metrics.csv")
     pd.DataFrame(fold_rows).to_csv(metrics_path, index=False)
 

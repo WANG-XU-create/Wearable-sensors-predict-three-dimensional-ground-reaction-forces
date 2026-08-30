@@ -163,6 +163,35 @@ def extract_targets(qualisys_df, left_plate=1):
     return _clean_array(qualisys_df[cols].to_numpy(dtype=float))
 
 
+# 对齐结果缓存：LOSO 每折都要用同一批 trial，对齐是确定性的，按
+# (路径对, refine_radius, left_plate) 缓存后 8 折只做 1 次磁盘读取+对齐
+# （226 次而不是 1808 次）。全量缓存约 11MB。
+_TRIAL_CACHE = {}
+
+
+def clear_trial_cache():
+    _TRIAL_CACHE.clear()
+
+
+def load_aligned_trial(sensor_path, qualisys_path, subject, refine_radius=DEFAULT_REFINE_RADIUS):
+    """读取+对齐+提取单个 trial，返回 (features, targets)，带缓存。"""
+    key = (
+        os.path.abspath(sensor_path),
+        os.path.abspath(qualisys_path),
+        refine_radius,
+        LEFT_FOOT_PLATE[subject],
+    )
+    if key not in _TRIAL_CACHE:
+        sensor, qual, _ = align(
+            read_sensor(sensor_path), read_qualisys(qualisys_path), refine_radius
+        )
+        _TRIAL_CACHE[key] = (
+            extract_features(sensor),
+            extract_targets(qual, left_plate=LEFT_FOOT_PLATE[subject]),
+        )
+    return _TRIAL_CACHE[key]
+
+
 def window_trial(features, targets, window=DEFAULT_WINDOW, step=DEFAULT_STEP):
     """把单次 trial 的 (features, targets) 切分成滑窗序列（不跨 trial）。"""
     n = len(features)
@@ -215,11 +244,7 @@ class GRFSequenceDataset(Dataset):
         self.window, self.step, self.refine_radius = window, step, refine_radius
         Xs, ys = [], []
         for sp, qp, z in trial_pairs:
-            sensor = read_sensor(sp)
-            qual = read_qualisys(qp)
-            sensor, qual, _ = align(sensor, qual, refine_radius)
-            f = extract_features(sensor)
-            t = extract_targets(qual, left_plate=LEFT_FOOT_PLATE[z])
+            f, t = load_aligned_trial(sp, qp, z, refine_radius)
             X, y = window_trial(f, t, window, step)
             if len(X):
                 Xs.append(X)
