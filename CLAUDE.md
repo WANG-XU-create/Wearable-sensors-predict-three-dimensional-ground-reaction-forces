@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues 存放在 GitHub Issues（WANG-XU-create/Wearable-sensors-predict-three-dimensional-ground-reaction-forces），所有操作走 `gh` CLI。See `docs/agents/issue-tracker.md`。
+Issues 存放在本地 `issues/` 目录（每个 issue 一个 markdown 文件，frontmatter 存元数据），不依赖 GitHub / `gh`。See `docs/agents/issue-tracker.md`。
 
 ### Triage labels
 
