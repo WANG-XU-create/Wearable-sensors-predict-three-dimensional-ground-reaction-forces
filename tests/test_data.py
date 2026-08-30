@@ -7,8 +7,11 @@ import pandas as pd
 
 from gait_grf.constants import (
     FEATURE_COLS,
+    LEFT_FOOT_PLATE,
+    PLATE_TARGET_COLS,
     PRESSURE_COLS,
     QUAT_COLS,
+    SUBJECT_MAP,
     SUM_COLS,
     TARGET_COLS,
 )
@@ -32,7 +35,8 @@ def _make_sensor_df(n, rng):
 
 
 def _make_qualisys_df(n, rng):
-    cols = ["time"] + list(TARGET_COLS)
+    # 模拟 Qualisys 原始文件列（力板编号命名）
+    cols = ["time"] + list(PLATE_TARGET_COLS)
     for p in ("1", "2"):
         cols += [f"ground_force_{p}_p{a}" for a in ("x", "y", "z")]
         cols += [f"ground_moment_{p}_m{a}" for a in ("x", "y", "z")]
@@ -124,6 +128,32 @@ class TestExtract(unittest.TestCase):
         self.assertTrue(np.isfinite(f).all())
         self.assertTrue(np.isfinite(t).all())
 
+    def test_targets_normalized_to_foot_semantics(self):
+        # 目标列序与受试者无关：前 3 列恒为左脚、后 3 列恒为右脚。
+        # z1–z5 左脚踩板1（列序不变）；z6–z8 左脚踩板2（交换两组列）。
+        n = 60
+        rng = np.random.default_rng(10)
+        qual = _make_qualisys_df(n, rng)
+        qual["ground_force_1_vx"] = 11.0
+        qual["ground_force_1_vy"] = 12.0
+        qual["ground_force_1_vz"] = 13.0
+        qual["ground_force_2_vx"] = 21.0
+        qual["ground_force_2_vy"] = 22.0
+        qual["ground_force_2_vz"] = 23.0
+        plate1_left = extract_targets(qual, left_plate=1)
+        self.assertEqual(list(TARGET_COLS[:3]), ["ground_force_left_vx", "ground_force_left_vy", "ground_force_left_vz"])
+        np.testing.assert_allclose(plate1_left[0], [11, 12, 13, 21, 22, 23])
+        plate2_left = extract_targets(qual, left_plate=2)
+        np.testing.assert_allclose(plate2_left[0], [21, 22, 23, 11, 12, 13])
+
+    def test_left_foot_plate_mapping_covers_all_subjects(self):
+        # 覆盖全部受试者；z1–z5 踩板1，z6–z8 踩板2（采集协议）
+        self.assertEqual(set(LEFT_FOOT_PLATE), set(SUBJECT_MAP))
+        for z in ("z1", "z2", "z3", "z4", "z5"):
+            self.assertEqual(LEFT_FOOT_PLATE[z], 1)
+        for z in ("z6", "z7", "z8"):
+            self.assertEqual(LEFT_FOOT_PLATE[z], 2)
+
     def test_inf_and_nan_cleaned(self):
         n = 120
         rng = np.random.default_rng(4)
@@ -157,28 +187,30 @@ class TestWindow(unittest.TestCase):
 
 
 class TestDataset(unittest.TestCase):
-    def _write_trial(self, root, tag, n, sentinel, rng):
+    def _write_trial(self, root, tag, n, sentinel, rng, subject="z1"):
         sensor = _make_sensor_df(n, rng)
         qual = _make_qualisys_df(n, rng)
         base = _gait_like(n)
         sensor["left_pressure_sum"] = base
         sensor["right_pressure_sum"] = 0.0
-        qual["ground_force_1_vy"] = base
-        qual["ground_force_2_vy"] = 0.0
+        # 左脚所踩板随受试者组变化：z1–z5 -> 板1；z6–z8 -> 板2
+        left_plate = LEFT_FOOT_PLATE[subject]
+        qual[f"ground_force_{left_plate}_vy"] = base
+        qual[f"ground_force_{3 - left_plate}_vy"] = 0.0
         # sentinel in a feature column to detect cross-trial mixing
         sensor["right_pressure0"] = float(sentinel)
         sp = os.path.join(root, f"sensor_{tag}.csv")
         qp = os.path.join(root, f"qual_{tag}.csv")
         sensor.to_csv(sp, index=False)
         qual.to_csv(qp, index=False)
-        return sp, qp
+        return sp, qp, subject
 
     def test_dataset_windows_do_not_cross_trials(self):
         rng = np.random.default_rng(7)
         with tempfile.TemporaryDirectory() as d:
-            sp1, qp1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
-            sp2, qp2 = self._write_trial(d, "b", 140, sentinel=2.0, rng=rng)
-            ds = GRFSequenceDataset([(sp1, qp1), (sp2, qp2)], window=100, step=10)
+            t1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
+            t2 = self._write_trial(d, "b", 140, sentinel=2.0, rng=rng)
+            ds = GRFSequenceDataset([t1, t2], window=100, step=10)
             n1 = (150 - 100) // 10 + 1
             n2 = (140 - 100) // 10 + 1
             self.assertEqual(len(ds), n1 + n2)
@@ -192,11 +224,29 @@ class TestDataset(unittest.TestCase):
             # 缩放后两 trial 的哨兵值不同，但窗口内恒定 → 恰好两种不同值
             self.assertEqual(len(sentinels), 2)
 
+    def test_dataset_swaps_targets_for_plate2_left_subjects(self):
+        # z6 左脚踩板2：目标 ground_force_left_vy 必须取自板2 vy（而非板1），
+        # 且与左脚压力同相；ground_force_right_vy 恒 0。
+        rng = np.random.default_rng(11)
+        with tempfile.TemporaryDirectory() as d:
+            t = self._write_trial(d, "z6", 150, sentinel=1.0, rng=rng, subject="z6")
+            ds = GRFSequenceDataset([t], window=100, step=10)
+            X, y = ds[0]
+            yN = ds.target_scaler.inverse_transform(
+                y.numpy().reshape(-1, 6)
+            ).reshape(100, 6)
+            left_vy, right_vy = yN[:, 1], yN[:, 4]
+            lpN = X[:, FEATURE_COLS.index("left_pressure_sum")].numpy()
+            lpN = lpN * ds.feature_scaler.scale_[FEATURE_COLS.index("left_pressure_sum")] \
+                + ds.feature_scaler.mean_[FEATURE_COLS.index("left_pressure_sum")]
+            self.assertGreater(float(np.corrcoef(left_vy, lpN)[0, 1]), 0.99)
+            self.assertTrue(np.allclose(right_vy, 0.0, atol=1e-6))
+
     def test_dataset_no_nan_and_finite(self):
         rng = np.random.default_rng(8)
         with tempfile.TemporaryDirectory() as d:
-            sp1, qp1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
-            ds = GRFSequenceDataset([(sp1, qp1)], window=100, step=10)
+            t1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
+            ds = GRFSequenceDataset([t1], window=100, step=10)
             X, y = ds[0]
             self.assertTrue(np.isfinite(X.numpy()).all())
             self.assertTrue(np.isfinite(y.numpy()).all())
@@ -206,11 +256,11 @@ class TestDataset(unittest.TestCase):
     def test_pretrained_scaler_applied(self):
         rng = np.random.default_rng(9)
         with tempfile.TemporaryDirectory() as d:
-            sp1, qp1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
-            sp2, qp2 = self._write_trial(d, "b", 140, sentinel=2.0, rng=rng)
-            train = GRFSequenceDataset([(sp1, qp1)], window=100, step=10)
+            t1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
+            t2 = self._write_trial(d, "b", 140, sentinel=2.0, rng=rng)
+            train = GRFSequenceDataset([t1], window=100, step=10)
             val = GRFSequenceDataset(
-                [(sp2, qp2)],
+                [t2],
                 window=100,
                 step=10,
                 feature_scaler=train.feature_scaler,
@@ -226,9 +276,10 @@ class TestDiscover(unittest.TestCase):
             self.skipTest("subjectdata 不存在")
         pairs = discover_trial_pairs(root, subjects=["z1"])
         self.assertGreater(len(pairs), 0)
-        for sp, qp in pairs[:3]:
+        for sp, qp, z in pairs[:3]:
             self.assertTrue(os.path.isfile(sp))
             self.assertTrue(os.path.isfile(qp))
+            self.assertEqual(z, "z1")
 
     def test_discovers_all_226_pairs(self):
         root = "/root/autodl-tmp/data/subjectdata"

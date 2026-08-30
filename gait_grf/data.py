@@ -15,8 +15,8 @@ from .constants import (
     DEFAULT_STEP,
     DEFAULT_WINDOW,
     FEATURE_COLS,
+    LEFT_FOOT_PLATE,
     SUBJECT_MAP,
-    TARGET_COLS,
 )
 
 
@@ -37,7 +37,11 @@ def pressure_diff(sensor_df):
 
 
 def vertical_grf_diff(qualisys_df):
-    """双板垂直 GRF 差（f1_vy − f2_vy）。Qualisys 中 y 轴朝上（vy 为垂直分量）。"""
+    """双板垂直 GRF 差（f1_vy − f2_vy）。Qualisys 中 y 轴朝上（vy 为垂直分量）。
+
+    注意：z6–z8 左脚踩板2，该差值符号与 z1–z5 相反；对齐只用 |相关| 峰，
+    符号无关紧要。
+    """
     return (
         qualisys_df["ground_force_1_vy"].to_numpy(dtype=float)
         - qualisys_df["ground_force_2_vy"].to_numpy(dtype=float)
@@ -147,8 +151,16 @@ def extract_features(sensor_df):
     return _clean_array(sensor_df[FEATURE_COLS].to_numpy(dtype=float))
 
 
-def extract_targets(qualisys_df):
-    return _clean_array(qualisys_df[TARGET_COLS].to_numpy(dtype=float))
+def extract_targets(qualisys_df, left_plate=1):
+    """提取目标并规范化为脚语义列序：前 3 列=左脚、后 3 列=右脚。
+
+    z1–z5 左脚踩板1（列序 ground_force_1,2 原样）；z6–z8 左脚踩板2，
+    交换两组列，使输出列序与受试者无关（否则左右脚语义随受试者组翻转，
+    共享模型会学到两套矛盾映射的平均）。
+    """
+    first, second = ("1", "2") if left_plate == 1 else ("2", "1")
+    cols = [f"ground_force_{p}_{a}" for p in (first, second) for a in ("vx", "vy", "vz")]
+    return _clean_array(qualisys_df[cols].to_numpy(dtype=float))
 
 
 def window_trial(features, targets, window=DEFAULT_WINDOW, step=DEFAULT_STEP):
@@ -166,7 +178,10 @@ def window_trial(features, targets, window=DEFAULT_WINDOW, step=DEFAULT_STEP):
 
 
 def discover_trial_pairs(subjectdata_root, subjects=None):
-    """按受试者+序号发现 (sensor_path, qualisys_path) 配对。subjects 为 z{n} 集合。"""
+    """按受试者+序号发现 trial，返回 (sensor_path, qualisys_path, subject) 三元组。
+
+    subject 供目标列的板->脚规范化使用（LEFT_FOOT_PLATE）。subjects 为 z{n} 集合。
+    """
     pairs = []
     for z, initials in SUBJECT_MAP.items():
         if subjects is not None and z not in subjects:
@@ -180,12 +195,13 @@ def discover_trial_pairs(subjectdata_root, subjects=None):
             code = os.path.basename(sf)[len(initials):].replace(".csv", "")
             qf = os.path.join(qual_dir, f"z{n}_{code}_mot_100Hz.csv")
             if os.path.isfile(qf):
-                pairs.append((sf, qf))
+                pairs.append((sf, qf, z))
     return pairs
 
 
 class GRFSequenceDataset(Dataset):
-    """给定 (sensor_path, qualisys_path) trial 对列表，产出对齐、滑窗、归一化的序列。"""
+    """给定 (sensor_path, qualisys_path, subject) trial 三元组列表，产出对齐、
+    滑窗、目标脚语义规范化、归一化的序列。"""
 
     def __init__(
         self,
@@ -198,12 +214,12 @@ class GRFSequenceDataset(Dataset):
     ):
         self.window, self.step, self.refine_radius = window, step, refine_radius
         Xs, ys = [], []
-        for sp, qp in trial_pairs:
+        for sp, qp, z in trial_pairs:
             sensor = read_sensor(sp)
             qual = read_qualisys(qp)
             sensor, qual, _ = align(sensor, qual, refine_radius)
             f = extract_features(sensor)
-            t = extract_targets(qual)
+            t = extract_targets(qual, left_plate=LEFT_FOOT_PLATE[z])
             X, y = window_trial(f, t, window, step)
             if len(X):
                 Xs.append(X)

@@ -83,6 +83,13 @@ Sensor    sensor/{INITIALS}/{INITIALS}{code}.csv
 - `ground_force_{1,2}_px/py/pz`：压力中心位置（m）
 - `ground_moment_{1,2}_mx/my/mz`：力矩
 
+> **板↔脚分配随受试者组翻转（重要）**：所有 trial 均左脚先踏上测力板再右脚。
+> z1–z5 左脚先踩**板1**（`ground_force_1_*` = 左脚）；z6–z8 左脚先踩**板2**
+> （`ground_force_1_*` = 右脚）。两组实验室坐标系一致（已用两组「左脚受力」
+> 的各轴均值对照验证：符号与量级一致，无行走方向翻转）。建模时必须按受试者
+> 把目标列规范化为「左脚/右脚」语义，否则左右脚标签随受试者翻转，共享模型
+> 无法学习（见 `gait_grf/constants.py` 的 `LEFT_FOOT_PLATE`）。
+
 每个受试者目录下另有一个 `calibration_report.csv`，记录标定参数：
 
 | 列 | 含义 |

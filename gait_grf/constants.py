@@ -23,8 +23,25 @@ SUM_COLS = ["right_pressure_sum", "left_pressure_sum"]
 # 完整输入特征列（120 维）
 FEATURE_COLS = list(QUAT_COLS) + PRESSURE_COLS + SUM_COLS
 
-# Qualisys 目标列：左右足各 3 维力（vx/vy/vz，共 6 维）
-TARGET_COLS = [f"ground_force_{p}_{a}" for p in ("1", "2") for a in ("vx", "vy", "vz")]
+# Qualisys 原始文件中的力板目标列（板编号命名）
+PLATE_TARGET_COLS = [f"ground_force_{p}_{a}" for p in ("1", "2") for a in ("vx", "vy", "vz")]
+
+# 规范化目标列（脚语义命名）：组1=左脚、组2=右脚，各 3 维力（vx/vy/vz，共 6 维）
+# 采集时 z1–z5 左脚先踩板1、z6–z8 左脚先踩板2，因此「板编号 -> 左右脚」随受试者
+# 组翻转；数据管线在读列时统一规范化为脚语义（见 data.extract_targets）。
+TARGET_COLS = [f"ground_force_{f}_{a}" for f in ("left", "right") for a in ("vx", "vy", "vz")]
+
+# 各受试者左脚先踏上的测力板编号（决定 ground_force_1/2 -> 左右脚的映射）
+LEFT_FOOT_PLATE = {
+    "z1": 1,
+    "z2": 1,
+    "z3": 1,
+    "z4": 1,
+    "z5": 1,
+    "z6": 2,
+    "z7": 2,
+    "z8": 2,
+}
 
 # Qualisys 受试者编号（z1–z8）-> sensor 姓名缩写
 SUBJECT_MAP = {
