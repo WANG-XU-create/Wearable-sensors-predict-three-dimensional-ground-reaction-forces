@@ -11,7 +11,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset
 
 from .constants import (
-    DEFAULT_MAX_LAG,
+    DEFAULT_REFINE_RADIUS,
     DEFAULT_STEP,
     DEFAULT_WINDOW,
     FEATURE_COLS,
@@ -44,19 +44,39 @@ def vertical_grf_diff(qualisys_df):
     )
 
 
-def find_lag(sensor_df, qualisys_df, max_lag=DEFAULT_MAX_LAG):
-    """返回 d，使得 sensor[i] ~ qualisys[i+d]。
+def _onset(arr, frac=0.2, min_run=5):
+    """首个持续超过 frac*max 并保持 min_run 帧的索引；检不出返回 None。"""
+    thr = frac * np.nanmax(arr)
+    for i in range(len(arr) - min_run + 1):
+        if (arr[i : i + min_run] > thr).all():
+            return i
+    return None
 
-    d > 0 表示 sensor 超前（leads）；d < 0 表示 sensor 滞后（lags）。
-    用「左右足压力差 ↔ 双板垂直 GRF 差」的归一化互相关（取绝对值最大）估计滞后；
-    两足在摆动相/支撑相各自振荡，差信号比「双足之和」更适合定位。
+
+def _onset_anchor_lag(sensor_df, qualisys_df):
+    """用「左足压力首次抬升 ↔ 首块被踩板 vy 首次抬升」估计滞后。
+
+    采集协议：所有 trial 均左脚先运动再右脚，且左脚首次落板必踩在板上，
+    因此该事件在两套系统中对应同一物理时刻，不受步态周期性影响。
+    返回 d（sensor[i] ~ qualisys[i+d]）；检不出返回 None。
     """
-    p = pressure_diff(sensor_df)
-    g = vertical_grf_diff(qualisys_df)
+    i_sensor = _onset(sensor_df["left_pressure_sum"].to_numpy(dtype=float))
+    plate_onsets = [
+        _onset(qualisys_df[f"ground_force_{p}_vy"].to_numpy(dtype=float))
+        for p in ("1", "2")
+    ]
+    plate_onsets = [i for i in plate_onsets if i is not None]
+    if i_sensor is None or not plate_onsets:
+        return None
+    return min(plate_onsets) - i_sensor
+
+
+def _local_corr_lag(p, g, center, radius):
+    """在 [center-radius, center+radius] 内做归一化互相关，取绝对值最大的滞后。"""
     p = (p - p.mean()) / (p.std() + 1e-9)
     g = (g - g.mean()) / (g.std() + 1e-9)
-    best_d, best = 0, -np.inf
-    for d in range(-max_lag, max_lag + 1):
+    best, best_d = -np.inf, center
+    for d in range(center - radius, center + radius + 1):
         if d >= 0:
             a = p[: len(p) - d] if d > 0 else p
             b = g[d:]
@@ -70,17 +90,38 @@ def find_lag(sensor_df, qualisys_df, max_lag=DEFAULT_MAX_LAG):
         score = abs(float((a[:n] * b[:n]).mean()))
         if score > best:
             best, best_d = score, d
-    if abs(best_d) == max_lag:
-        warnings.warn(
-            f"互相关滞后卡在搜索边界 ±{max_lag}，真实滞后可能在范围外",
-            stacklevel=2,
-        )
     return best_d
 
 
-def align(sensor_df, qualisys_df, max_lag=DEFAULT_MAX_LAG):
+def find_lag(sensor_df, qualisys_df, refine_radius=DEFAULT_REFINE_RADIUS):
+    """返回 d，使得 sensor[i] ~ qualisys[i+d]（d > 0 表示 sensor 超前）。
+
+    两步估计：
+    1. onset 锚定：左足压力首次抬升 ↔ 首块被踩板 vy 首次抬升。步态信号周期
+       ~1s，在 ~2s 的短 trial 上做宽范围互相关会在 ±1 个步态周期处出现假峰，
+       因此先用首触板事件把滞后锚定住。
+    2. 局部精修：在锚点 ±refine_radius 内对「左右足压力差 ↔ 双板 vy 差」做
+       归一化互相关（绝对值最大），消除 onset 阈值带来的系统偏差。
+    onset 检不出时按 lag=0 处理并告警。
+    """
+    anchor = _onset_anchor_lag(sensor_df, qualisys_df)
+    if anchor is None:
+        warnings.warn(
+            "onset 锚定失败（未检出左足压力抬升或力板加载），按 lag=0 处理",
+            stacklevel=2,
+        )
+        return 0
+    return _local_corr_lag(
+        pressure_diff(sensor_df),
+        vertical_grf_diff(qualisys_df),
+        anchor,
+        refine_radius,
+    )
+
+
+def align(sensor_df, qualisys_df, refine_radius=DEFAULT_REFINE_RADIUS):
     """对齐 sensor 与 qualisys，返回等长的 (sensor_df, qualisys_df, lag)。"""
-    d = find_lag(sensor_df, qualisys_df, max_lag)
+    d = find_lag(sensor_df, qualisys_df, refine_radius)
     s = sensor_df.reset_index(drop=True)
     q = qualisys_df.reset_index(drop=True)
     if d >= 0:
@@ -151,16 +192,16 @@ class GRFSequenceDataset(Dataset):
         trial_pairs,
         window=DEFAULT_WINDOW,
         step=DEFAULT_STEP,
-        max_lag=DEFAULT_MAX_LAG,
+        refine_radius=DEFAULT_REFINE_RADIUS,
         feature_scaler=None,
         target_scaler=None,
     ):
-        self.window, self.step, self.max_lag = window, step, max_lag
+        self.window, self.step, self.refine_radius = window, step, refine_radius
         Xs, ys = [], []
         for sp, qp in trial_pairs:
             sensor = read_sensor(sp)
             qual = read_qualisys(qp)
-            sensor, qual, _ = align(sensor, qual, max_lag)
+            sensor, qual, _ = align(sensor, qual, refine_radius)
             f = extract_features(sensor)
             t = extract_targets(qual)
             X, y = window_trial(f, t, window, step)

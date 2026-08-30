@@ -41,4 +41,4 @@ SUBJECT_MAP = {
 # 默认滑窗/对齐超参
 DEFAULT_WINDOW = 100  # 帧（1s @100Hz）
 DEFAULT_STEP = 10  # 帧
-DEFAULT_MAX_LAG = 100  # 帧（对齐搜索范围）
+DEFAULT_REFINE_RADIUS = 10  # 帧（onset 锚点附近的互相关精修半径）

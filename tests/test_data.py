@@ -72,7 +72,7 @@ class TestFindLag(unittest.TestCase):
         sensor["right_pressure_sum"] = 0.0
         qual["ground_force_1_vy"] = base
         qual["ground_force_2_vy"] = 0.0
-        self.assertEqual(find_lag(sensor, qual, max_lag=50), -L)
+        self.assertEqual(find_lag(sensor, qual), -L)
 
     def test_recovers_sensor_lead(self):
         # GRF = base delayed by L  ->  sensor leads  ->  lag = +L
@@ -87,7 +87,7 @@ class TestFindLag(unittest.TestCase):
         sensor["right_pressure_sum"] = 0.0
         qual["ground_force_1_vy"] = g
         qual["ground_force_2_vy"] = 0.0
-        self.assertEqual(find_lag(sensor, qual, max_lag=50), L)
+        self.assertEqual(find_lag(sensor, qual), L)
 
 
 class TestAlign(unittest.TestCase):
@@ -104,11 +104,11 @@ class TestAlign(unittest.TestCase):
         qual["ground_force_1_vy"] = base
         qual["ground_force_2_vy"] = 0.0
 
-        s, q, lag = align(sensor, qual, max_lag=50)
+        s, q, lag = align(sensor, qual)
         self.assertEqual(lag, -L)
         self.assertEqual(len(s), len(q))
         # after alignment, residual lag should be zero
-        self.assertEqual(find_lag(s, q, max_lag=10), 0)
+        self.assertEqual(find_lag(s, q), 0)
 
 
 class TestExtract(unittest.TestCase):
