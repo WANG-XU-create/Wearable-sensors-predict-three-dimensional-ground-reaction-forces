@@ -7,6 +7,7 @@
 用法：
     python -m gait_grf.train --data-root data/subjectdata --out-dir runs/ltc_full \
         --hidden 128 --layers 2 --dropout 0.3 --epochs 100
+    基线：--model lstm / --model tcn（其余参数同构，公平对比）
 
 输出（写入 out-dir）：
     metrics.csv              每折一行：6 个 GRF 输出列的 RMSE(N) + 合成幅值
@@ -45,7 +46,7 @@ from .data import (
     load_aligned_trial,
     window_trial,
 )
-from .models import GaitLTC
+from .models import make_model
 
 # 规范化目标名（脚语义）：ground_force_left_vx ... ground_force_right_vz
 TARGET_NAMES = list(TARGET_COLS)
@@ -117,7 +118,8 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
             target_scaler=scalers[1],
         )
 
-    model = GaitLTC(
+    model = make_model(
+        cfg["model"],
         input_size=X.shape[-1],
         output_size=y.shape[-1],
         hidden=cfg["hidden"],
@@ -369,8 +371,8 @@ def main(argv=None):
     parser.add_argument(
         "--model",
         default="ltc",
-        choices=["ltc"],
-        help="模型选择（LSTM/TCN 基线在 ticket #5 加入）",
+        choices=["ltc", "lstm", "tcn"],
+        help="模型选择：LTC 主模型 / LSTM、TCN 基线（ticket #5）",
     )
     parser.add_argument("--hidden", type=int, default=32, help="LTC 隐层大小")
     parser.add_argument("--layers", type=int, default=1, help="LTC 层数")

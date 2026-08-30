@@ -114,8 +114,8 @@ class TestEarlyStopping(unittest.TestCase):
             pairs = discover_trial_pairs(d, subjects=["z1"])
             fit, val = split_val_trials(pairs, 0.25, np.random.default_rng(0))
             cfg = {
-                "window": 100, "step": 10, "hidden": 8, "layers": 1,
-                "dropout": 0.0, "epochs": 50, "patience": 3,
+                "model": "ltc", "window": 100, "step": 10, "hidden": 8,
+                "layers": 1, "dropout": 0.0, "epochs": 50, "patience": 3,
                 "batch_size": 8, "lr": 0.0,
             }
             _, _, history = train_one_fold(fit, val, cfg, torch.device("cpu"))
@@ -131,8 +131,8 @@ class TestEarlyStopping(unittest.TestCase):
             pairs = discover_trial_pairs(d, subjects=["z1"])
             fit, val = split_val_trials(pairs, 0.25, np.random.default_rng(0))
             cfg = {
-                "window": 100, "step": 10, "hidden": 8, "layers": 1,
-                "dropout": 0.0, "epochs": 3, "patience": 0,
+                "model": "ltc", "window": 100, "step": 10, "hidden": 8,
+                "layers": 1, "dropout": 0.0, "epochs": 3, "patience": 0,
                 "batch_size": 8, "lr": 0.0,
             }
             _, _, history = train_one_fold(fit, val, cfg, torch.device("cpu"))
