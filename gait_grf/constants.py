@@ -43,6 +43,21 @@ LEFT_FOOT_PLATE = {
     "z8": 2,
 }
 
+# 各受试者体重（N）= kg × g。来源：subject_info.md 的体重表（79.5/60.0/75.5/
+# 68.5/73.0/60.0/55.0/83.0 kg，已与各 Qualisys calibration_report.csv 核对一致）。
+# 用于 %BW 归一化指标（跨受试者公平比较）。
+G = 9.80665
+SUBJECT_WEIGHT_N = {
+    "z1": 79.5 * G,
+    "z2": 60.0 * G,
+    "z3": 75.5 * G,
+    "z4": 68.5 * G,
+    "z5": 73.0 * G,
+    "z6": 60.0 * G,
+    "z7": 55.0 * G,
+    "z8": 83.0 * G,
+}
+
 # Qualisys 受试者编号（z1–z8）-> sensor 姓名缩写
 SUBJECT_MAP = {
     "z1": "LQW",

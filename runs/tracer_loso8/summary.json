@@ -1,0 +1,1715 @@
+{
+  "config": {
+    "model": "ltc",
+    "hidden": 32,
+    "layers": 1,
+    "dropout": 0.0,
+    "epochs": 5,
+    "batch_size": 32,
+    "lr": 0.001,
+    "window": 100,
+    "step": 10,
+    "val_frac": 0.15,
+    "refine_radius": 10,
+    "seed": 42
+  },
+  "data_root": "/root/autodl-tmp/data/subjectdata",
+  "subjects": [
+    "z1",
+    "z2",
+    "z3",
+    "z4",
+    "z5",
+    "z6",
+    "z7",
+    "z8"
+  ],
+  "folds": [
+    {
+      "fold": 1,
+      "test_subject": "z1",
+      "test_trials": [
+        {
+          "sensor": "LQW01.csv",
+          "qualisys": "z1_01_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "LQW02.csv",
+          "qualisys": "z1_02_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "LQW03.csv",
+          "qualisys": "z1_03_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "LQW04.csv",
+          "qualisys": "z1_04_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW05.csv",
+          "qualisys": "z1_05_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW06.csv",
+          "qualisys": "z1_06_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW07.csv",
+          "qualisys": "z1_07_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "LQW08.csv",
+          "qualisys": "z1_08_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW09.csv",
+          "qualisys": "z1_09_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "LQW10.csv",
+          "qualisys": "z1_10_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW11.csv",
+          "qualisys": "z1_11_mot_100Hz.csv",
+          "n_windows": 14,
+          "n_frames_evaluated": 230
+        },
+        {
+          "sensor": "LQW12.csv",
+          "qualisys": "z1_12_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW13.csv",
+          "qualisys": "z1_13_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "LQW14.csv",
+          "qualisys": "z1_14_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "LQW15.csv",
+          "qualisys": "z1_15_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW16.csv",
+          "qualisys": "z1_16_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW17.csv",
+          "qualisys": "z1_17_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "LQW18.csv",
+          "qualisys": "z1_18_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW19.csv",
+          "qualisys": "z1_19_mot_100Hz.csv",
+          "n_windows": 13,
+          "n_frames_evaluated": 220
+        },
+        {
+          "sensor": "LQW20.csv",
+          "qualisys": "z1_20_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "LQW21.csv",
+          "qualisys": "z1_21_mot_100Hz.csv",
+          "n_windows": 14,
+          "n_frames_evaluated": 230
+        },
+        {
+          "sensor": "LQW22.csv",
+          "qualisys": "z1_22_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW23.csv",
+          "qualisys": "z1_23_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW24.csv",
+          "qualisys": "z1_24_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW25.csv",
+          "qualisys": "z1_25_mot_100Hz.csv",
+          "n_windows": 13,
+          "n_frames_evaluated": 220
+        },
+        {
+          "sensor": "LQW26.csv",
+          "qualisys": "z1_26_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "LQW27.csv",
+          "qualisys": "z1_27_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "LQW28.csv",
+          "qualisys": "z1_28_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        }
+      ],
+      "n_val_trials": 30,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.9541553147137165,
+          "val_loss": 0.8805077075958252
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.7424282642702261,
+          "val_loss": 0.6459242701530457
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.5045314307014147,
+          "val_loss": 0.49198585748672485
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.41284241651495296,
+          "val_loss": 0.44393572211265564
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.37461611442267895,
+          "val_loss": 0.4198169410228729
+        }
+      ]
+    },
+    {
+      "fold": 2,
+      "test_subject": "z2",
+      "test_trials": [
+        {
+          "sensor": "WY01.csv",
+          "qualisys": "z2_01_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "WY02.csv",
+          "qualisys": "z2_02_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY03.csv",
+          "qualisys": "z2_03_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY04.csv",
+          "qualisys": "z2_04_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "WY05.csv",
+          "qualisys": "z2_05_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "WY06.csv",
+          "qualisys": "z2_06_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY07.csv",
+          "qualisys": "z2_07_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY08.csv",
+          "qualisys": "z2_08_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY09.csv",
+          "qualisys": "z2_09_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY10.csv",
+          "qualisys": "z2_10_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "WY11.csv",
+          "qualisys": "z2_11_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "WY12.csv",
+          "qualisys": "z2_12_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "WY13.csv",
+          "qualisys": "z2_13_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY14.csv",
+          "qualisys": "z2_14_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY15.csv",
+          "qualisys": "z2_15_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY16.csv",
+          "qualisys": "z2_16_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "WY17.csv",
+          "qualisys": "z2_17_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY18.csv",
+          "qualisys": "z2_18_mot_100Hz.csv",
+          "n_windows": 4,
+          "n_frames_evaluated": 130
+        },
+        {
+          "sensor": "WY19.csv",
+          "qualisys": "z2_19_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "WY20.csv",
+          "qualisys": "z2_20_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        }
+      ],
+      "n_val_trials": 31,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.8858955480017752,
+          "val_loss": 0.7438269257545471
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.6113469696269845,
+          "val_loss": 0.5048732161521912
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.4462049125500445,
+          "val_loss": 0.43870601058006287
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.3865790102841719,
+          "val_loss": 0.3977402448654175
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.3534507875172597,
+          "val_loss": 0.37410321831703186
+        }
+      ]
+    },
+    {
+      "fold": 3,
+      "test_subject": "z3",
+      "test_trials": [
+        {
+          "sensor": "HYJ01.csv",
+          "qualisys": "z3_01_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ02.csv",
+          "qualisys": "z3_02_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ03.csv",
+          "qualisys": "z3_03_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ04.csv",
+          "qualisys": "z3_04_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ05.csv",
+          "qualisys": "z3_05_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "HYJ06.csv",
+          "qualisys": "z3_06_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ07.csv",
+          "qualisys": "z3_07_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ08.csv",
+          "qualisys": "z3_08_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ09.csv",
+          "qualisys": "z3_09_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ10.csv",
+          "qualisys": "z3_10_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ11.csv",
+          "qualisys": "z3_11_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ12.csv",
+          "qualisys": "z3_12_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ13.csv",
+          "qualisys": "z3_13_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ14.csv",
+          "qualisys": "z3_14_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ15.csv",
+          "qualisys": "z3_15_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ16.csv",
+          "qualisys": "z3_16_mot_100Hz.csv",
+          "n_windows": 5,
+          "n_frames_evaluated": 140
+        },
+        {
+          "sensor": "HYJ17.csv",
+          "qualisys": "z3_17_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ18.csv",
+          "qualisys": "z3_18_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "HYJ19.csv",
+          "qualisys": "z3_19_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ20.csv",
+          "qualisys": "z3_20_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ21.csv",
+          "qualisys": "z3_21_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ22.csv",
+          "qualisys": "z3_22_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ23.csv",
+          "qualisys": "z3_23_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ24.csv",
+          "qualisys": "z3_24_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ25.csv",
+          "qualisys": "z3_25_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ26.csv",
+          "qualisys": "z3_26_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "HYJ27.csv",
+          "qualisys": "z3_27_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ28.csv",
+          "qualisys": "z3_28_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ29.csv",
+          "qualisys": "z3_29_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ30.csv",
+          "qualisys": "z3_30_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        },
+        {
+          "sensor": "HYJ31.csv",
+          "qualisys": "z3_31_mot_100Hz.csv",
+          "n_windows": 6,
+          "n_frames_evaluated": 150
+        }
+      ],
+      "n_val_trials": 29,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.8862398301853853,
+          "val_loss": 0.8582842946052551
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.6300714039335064,
+          "val_loss": 0.5642982721328735
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.4501446988068375,
+          "val_loss": 0.46715182065963745
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.3921360718268974,
+          "val_loss": 0.42247989773750305
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.3599633013500887,
+          "val_loss": 0.3949889540672302
+        }
+      ]
+    },
+    {
+      "fold": 4,
+      "test_subject": "z4",
+      "test_trials": [
+        {
+          "sensor": "SXL01.csv",
+          "qualisys": "z4_01_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "SXL02.csv",
+          "qualisys": "z4_02_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "SXL03.csv",
+          "qualisys": "z4_03_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "SXL04.csv",
+          "qualisys": "z4_04_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "SXL05.csv",
+          "qualisys": "z4_05_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "SXL06.csv",
+          "qualisys": "z4_06_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "SXL07.csv",
+          "qualisys": "z4_07_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "SXL08.csv",
+          "qualisys": "z4_08_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL09.csv",
+          "qualisys": "z4_09_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "SXL10.csv",
+          "qualisys": "z4_10_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "SXL11.csv",
+          "qualisys": "z4_11_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "SXL12.csv",
+          "qualisys": "z4_12_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL13.csv",
+          "qualisys": "z4_13_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "SXL14.csv",
+          "qualisys": "z4_14_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "SXL15.csv",
+          "qualisys": "z4_15_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "SXL16.csv",
+          "qualisys": "z4_16_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "SXL17.csv",
+          "qualisys": "z4_17_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "SXL18.csv",
+          "qualisys": "z4_18_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL19.csv",
+          "qualisys": "z4_19_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "SXL20.csv",
+          "qualisys": "z4_20_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL21.csv",
+          "qualisys": "z4_21_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL22.csv",
+          "qualisys": "z4_22_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "SXL23.csv",
+          "qualisys": "z4_23_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "SXL24.csv",
+          "qualisys": "z4_24_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL25.csv",
+          "qualisys": "z4_25_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "SXL26.csv",
+          "qualisys": "z4_26_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL27.csv",
+          "qualisys": "z4_27_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL28.csv",
+          "qualisys": "z4_28_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "SXL29.csv",
+          "qualisys": "z4_29_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        }
+      ],
+      "n_val_trials": 30,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.9160641516957965,
+          "val_loss": 0.7752494812011719
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.6778742245265416,
+          "val_loss": 0.5117617845535278
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.4778832397898849,
+          "val_loss": 0.3998076617717743
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.40291235459094144,
+          "val_loss": 0.3451792895793915
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.3639722922626807,
+          "val_loss": 0.32081764936447144
+        }
+      ]
+    },
+    {
+      "fold": 5,
+      "test_subject": "z5",
+      "test_trials": [
+        {
+          "sensor": "WX01.csv",
+          "qualisys": "z5_01_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX02.csv",
+          "qualisys": "z5_02_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX03.csv",
+          "qualisys": "z5_03_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX04.csv",
+          "qualisys": "z5_04_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX05.csv",
+          "qualisys": "z5_05_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX06.csv",
+          "qualisys": "z5_06_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX07.csv",
+          "qualisys": "z5_07_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX08.csv",
+          "qualisys": "z5_08_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX09.csv",
+          "qualisys": "z5_09_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX10.csv",
+          "qualisys": "z5_10_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX11.csv",
+          "qualisys": "z5_11_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "WX12.csv",
+          "qualisys": "z5_12_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX13.csv",
+          "qualisys": "z5_13_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "WX14.csv",
+          "qualisys": "z5_14_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "WX15.csv",
+          "qualisys": "z5_15_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX16.csv",
+          "qualisys": "z5_16_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX17.csv",
+          "qualisys": "z5_17_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX18.csv",
+          "qualisys": "z5_18_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "WX19.csv",
+          "qualisys": "z5_19_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX20.csv",
+          "qualisys": "z5_20_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "WX21.csv",
+          "qualisys": "z5_21_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "WX22.csv",
+          "qualisys": "z5_22_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX23.csv",
+          "qualisys": "z5_23_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "WX24.csv",
+          "qualisys": "z5_24_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX25.csv",
+          "qualisys": "z5_25_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "WX26.csv",
+          "qualisys": "z5_26_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX27.csv",
+          "qualisys": "z5_27_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "WX28.csv",
+          "qualisys": "z5_28_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX29.csv",
+          "qualisys": "z5_29_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "WX30.csv",
+          "qualisys": "z5_30_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "WX31.csv",
+          "qualisys": "z5_31_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        }
+      ],
+      "n_val_trials": 29,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.9345789795019188,
+          "val_loss": 0.8359531760215759
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.7123519364668398,
+          "val_loss": 0.5660198926925659
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.4888086732552976,
+          "val_loss": 0.43329954147338867
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.4111802371180787,
+          "val_loss": 0.38194796442985535
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.37266651890715774,
+          "val_loss": 0.35388845205307007
+        }
+      ]
+    },
+    {
+      "fold": 6,
+      "test_subject": "z6",
+      "test_trials": [
+        {
+          "sensor": "XBL01.csv",
+          "qualisys": "z6_01_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL02.csv",
+          "qualisys": "z6_02_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL03.csv",
+          "qualisys": "z6_03_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "XBL04.csv",
+          "qualisys": "z6_04_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL05.csv",
+          "qualisys": "z6_05_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL06.csv",
+          "qualisys": "z6_06_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL07.csv",
+          "qualisys": "z6_07_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL08.csv",
+          "qualisys": "z6_08_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL09.csv",
+          "qualisys": "z6_09_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL10.csv",
+          "qualisys": "z6_10_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL11.csv",
+          "qualisys": "z6_11_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL12.csv",
+          "qualisys": "z6_12_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL13.csv",
+          "qualisys": "z6_13_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL14.csv",
+          "qualisys": "z6_14_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL15.csv",
+          "qualisys": "z6_15_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL16.csv",
+          "qualisys": "z6_16_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL17.csv",
+          "qualisys": "z6_17_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "XBL18.csv",
+          "qualisys": "z6_18_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL19.csv",
+          "qualisys": "z6_19_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL20.csv",
+          "qualisys": "z6_20_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL21.csv",
+          "qualisys": "z6_21_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL22.csv",
+          "qualisys": "z6_22_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL23.csv",
+          "qualisys": "z6_23_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL24.csv",
+          "qualisys": "z6_24_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL25.csv",
+          "qualisys": "z6_25_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL26.csv",
+          "qualisys": "z6_26_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "XBL27.csv",
+          "qualisys": "z6_27_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL28.csv",
+          "qualisys": "z6_28_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "XBL29.csv",
+          "qualisys": "z6_29_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "XBL30.csv",
+          "qualisys": "z6_30_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        }
+      ],
+      "n_val_trials": 29,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.9705550755773272,
+          "val_loss": 0.8507887721061707
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.7697879684214689,
+          "val_loss": 0.6108579039573669
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.5032794469473313,
+          "val_loss": 0.43622443079948425
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.39243205530302866,
+          "val_loss": 0.3797072470188141
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.34919327254198035,
+          "val_loss": 0.35440441966056824
+        }
+      ]
+    },
+    {
+      "fold": 7,
+      "test_subject": "z7",
+      "test_trials": [
+        {
+          "sensor": "ZWJ01.csv",
+          "qualisys": "z7_01_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ02.csv",
+          "qualisys": "z7_02_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ03.csv",
+          "qualisys": "z7_03_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "ZWJ04.csv",
+          "qualisys": "z7_04_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ05.csv",
+          "qualisys": "z7_05_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ06.csv",
+          "qualisys": "z7_06_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "ZWJ07.csv",
+          "qualisys": "z7_07_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ08.csv",
+          "qualisys": "z7_08_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ09.csv",
+          "qualisys": "z7_09_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ10.csv",
+          "qualisys": "z7_10_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ11.csv",
+          "qualisys": "z7_11_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "ZWJ12.csv",
+          "qualisys": "z7_12_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ13.csv",
+          "qualisys": "z7_13_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ14.csv",
+          "qualisys": "z7_14_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ15.csv",
+          "qualisys": "z7_15_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ16.csv",
+          "qualisys": "z7_16_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "ZWJ17.csv",
+          "qualisys": "z7_17_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ18.csv",
+          "qualisys": "z7_18_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "ZWJ19.csv",
+          "qualisys": "z7_19_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "ZWJ20.csv",
+          "qualisys": "z7_20_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "ZWJ21.csv",
+          "qualisys": "z7_21_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "ZWJ22.csv",
+          "qualisys": "z7_22_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ23.csv",
+          "qualisys": "z7_23_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "ZWJ24.csv",
+          "qualisys": "z7_24_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "ZWJ25.csv",
+          "qualisys": "z7_25_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ26.csv",
+          "qualisys": "z7_26_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "ZWJ27.csv",
+          "qualisys": "z7_27_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "ZWJ28.csv",
+          "qualisys": "z7_28_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "ZWJ29.csv",
+          "qualisys": "z7_29_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        }
+      ],
+      "n_val_trials": 30,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.9591572479325898,
+          "val_loss": 0.8901441097259521
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.7278504383807279,
+          "val_loss": 0.6049899458885193
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.47312402056188,
+          "val_loss": 0.436781108379364
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.37769195619894536,
+          "val_loss": 0.37324047088623047
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.3267435388905661,
+          "val_loss": 0.3371362090110779
+        }
+      ]
+    },
+    {
+      "fold": 8,
+      "test_subject": "z8",
+      "test_trials": [
+        {
+          "sensor": "YZJ01.csv",
+          "qualisys": "z8_01_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "YZJ02.csv",
+          "qualisys": "z8_02_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ03.csv",
+          "qualisys": "z8_03_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "YZJ04.csv",
+          "qualisys": "z8_04_mot_100Hz.csv",
+          "n_windows": 7,
+          "n_frames_evaluated": 160
+        },
+        {
+          "sensor": "YZJ05.csv",
+          "qualisys": "z8_05_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "YZJ06.csv",
+          "qualisys": "z8_06_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "YZJ07.csv",
+          "qualisys": "z8_07_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ08.csv",
+          "qualisys": "z8_08_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ09.csv",
+          "qualisys": "z8_09_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ10.csv",
+          "qualisys": "z8_10_mot_100Hz.csv",
+          "n_windows": 12,
+          "n_frames_evaluated": 210
+        },
+        {
+          "sensor": "YZJ11.csv",
+          "qualisys": "z8_11_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ12.csv",
+          "qualisys": "z8_12_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ13.csv",
+          "qualisys": "z8_13_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "YZJ14.csv",
+          "qualisys": "z8_14_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "YZJ15.csv",
+          "qualisys": "z8_15_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ16.csv",
+          "qualisys": "z8_16_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ17.csv",
+          "qualisys": "z8_17_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ18.csv",
+          "qualisys": "z8_18_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ19.csv",
+          "qualisys": "z8_19_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ20.csv",
+          "qualisys": "z8_20_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ21.csv",
+          "qualisys": "z8_21_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ22.csv",
+          "qualisys": "z8_22_mot_100Hz.csv",
+          "n_windows": 8,
+          "n_frames_evaluated": 170
+        },
+        {
+          "sensor": "YZJ23.csv",
+          "qualisys": "z8_23_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ24.csv",
+          "qualisys": "z8_24_mot_100Hz.csv",
+          "n_windows": 11,
+          "n_frames_evaluated": 200
+        },
+        {
+          "sensor": "YZJ25.csv",
+          "qualisys": "z8_25_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        },
+        {
+          "sensor": "YZJ26.csv",
+          "qualisys": "z8_26_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ27.csv",
+          "qualisys": "z8_27_mot_100Hz.csv",
+          "n_windows": 9,
+          "n_frames_evaluated": 180
+        },
+        {
+          "sensor": "YZJ28.csv",
+          "qualisys": "z8_28_mot_100Hz.csv",
+          "n_windows": 10,
+          "n_frames_evaluated": 190
+        }
+      ],
+      "n_val_trials": 30,
+      "history": [
+        {
+          "epoch": 1,
+          "train_loss": 0.8815437126159668,
+          "val_loss": 0.7443934082984924
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.6318489718437195,
+          "val_loss": 0.4863014817237854
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.45628380715847017,
+          "val_loss": 0.40482422709465027
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.38657996952533724,
+          "val_loss": 0.34759989380836487
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.34304113388061525,
+          "val_loss": 0.32190608978271484
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "rmse_N_ground_force_left_vx": {
+      "mean": 10.363955125622072,
+      "std": 1.6373994624418482
+    },
+    "pearson_r_ground_force_left_vx": {
+      "mean": 0.7943362641512142,
+      "std": 0.06666264101564236
+    },
+    "rmse_N_ground_force_left_vy": {
+      "mean": 170.08398946068053,
+      "std": 13.846799591258357
+    },
+    "pearson_r_ground_force_left_vy": {
+      "mean": 0.8523914233090502,
+      "std": 0.051198424477432655
+    },
+    "rmse_N_ground_force_left_vz": {
+      "mean": 20.12051179010647,
+      "std": 7.3637076958997065
+    },
+    "pearson_r_ground_force_left_vz": {
+      "mean": 0.7453288420095181,
+      "std": 0.08594419734526967
+    },
+    "rmse_N_ground_force_right_vx": {
+      "mean": 14.987498878513243,
+      "std": 3.8149614783106807
+    },
+    "pearson_r_ground_force_right_vx": {
+      "mean": 0.6764020747182794,
+      "std": 0.149916323851018
+    },
+    "rmse_N_ground_force_right_vy": {
+      "mean": 177.45099034090717,
+      "std": 26.58208133332036
+    },
+    "pearson_r_ground_force_right_vy": {
+      "mean": 0.8482950487408686,
+      "std": 0.05865915041970306
+    },
+    "rmse_N_ground_force_right_vz": {
+      "mean": 27.421085571203296,
+      "std": 8.770685596266933
+    },
+    "pearson_r_ground_force_right_vz": {
+      "mean": 0.7327735108216146,
+      "std": 0.08773570181574816
+    },
+    "rmse_N_resultant": {
+      "mean": 164.82500588363325,
+      "std": 19.671106454134016
+    },
+    "pearson_r_resultant": {
+      "mean": 0.852531480109296,
+      "std": 0.06074946488932133
+    }
+  }
+}

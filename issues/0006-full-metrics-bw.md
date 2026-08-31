@@ -3,7 +3,7 @@ id: 0006
 title: "完整指标：%BW 归一化 RMSE + 峰值/冲量/峰值时机"
 status: open          # open | closed
 labels: [ready-for-agent]
-assignee: ""          # 空 = 未分配；claim 时填名字
+assignee: claude       # 空 = 未分配；claim 时填名字
 blocked_by: []        # 被哪些 issue 阻塞
 part_of: ""           # 若为 wayfinder child，填 map 的编号
 created: 2026-08-30
@@ -27,3 +27,7 @@ updated: 2026-08-30
 **依赖**：实现本身可独立进行（可先在 tracer 输出上验证）；正式对比需要 #4、#5 的 LOSO 结果（软依赖，非硬阻塞）。
 
 ## Comments
+
+### @claude - 2026-08-30
+
+已 claim。实现方案：指标计算抽到独立的 `gait_grf/metrics.py`（纯函数），两处复用--`train.py` 的 fold_metrics 委托它（#5 起的运行原生带全量指标），另加 `gait_grf/evaluate.py` 后置入口（加载 run 目录的 checkpoint 重新预测算指标）--这样 #4 正在跑的运行结束后无需重训即可补出 %BW 指标。体重用 subject_info.md 表（已与 calibration_report.csv 核对一致）。

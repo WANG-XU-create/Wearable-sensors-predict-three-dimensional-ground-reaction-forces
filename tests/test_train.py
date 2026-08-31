@@ -227,5 +227,22 @@ class TestTrainerEndToEnd(unittest.TestCase):
             self.assertLess(losses[-1], losses[0])
 
 
+    def test_evaluate_entry_recomputes_from_checkpoints(self):
+        """#6 后置评估：从 checkpoint 重新预测，产出 %BW/辅助指标（无需重训）。"""
+        from gait_grf.evaluate import evaluate_run
+
+        rows = evaluate_run(self.out_dir, self.data_root, torch.device("cpu"))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["test_subject"] for r in rows}, {"z1", "z3", "z6"})
+        for row in rows:
+            self.assertGreater(row["n_test_trials"], 0)
+            self.assertIn("rmse_pctbw_ground_force_left_vy", row)
+            self.assertIn("impulse_err_pctbw_s_ground_force_right_vy", row)
+            self.assertIn("peak_lag_frames_ground_force_left_vz", row)
+            for k, v in row.items():
+                if k != "test_subject":
+                    self.assertTrue(np.isfinite(v), f"{k} 非有限")
+
+
 if __name__ == "__main__":
     unittest.main()

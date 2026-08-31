@@ -38,7 +38,7 @@ from .constants import (
     DEFAULT_STEP,
     DEFAULT_WINDOW,
     SUBJECT_MAP,
-    TARGET_COLS,
+    SUBJECT_WEIGHT_N,
 )
 from .data import (
     GRFSequenceDataset,
@@ -46,10 +46,8 @@ from .data import (
     load_aligned_trial,
     window_trial,
 )
+from .metrics import fold_metrics as metrics_fold_metrics
 from .models import make_model
-
-# 规范化目标名（脚语义）：ground_force_left_vx ... ground_force_right_vz
-TARGET_NAMES = list(TARGET_COLS)
 
 
 def set_seed(seed):
@@ -208,35 +206,9 @@ def predict_trial(model, scalers, sensor_path, qualisys_path, subject, cfg, devi
     return pred_frame, targets[:t_cov], n
 
 
-def _pearson(pred, true):
-    """逐列 Pearson r；常量列（std≈0）记 0.0，保证指标有限。"""
-    ps = pred.std(axis=0)
-    ts = true.std(axis=0)
-    if (ps < 1e-12).any() or (ts < 1e-12).any():
-        return 0.0
-    return float(np.corrcoef(pred.flatten(), true.flatten())[0, 1])
-
-
-def fold_metrics(preds, trues):
-    """preds/trues: 列表，每个元素 (T_i, 6) 的逐帧 N 数组。返回指标 dict。"""
-    pred = np.concatenate(preds)
-    true = np.concatenate(trues)
-    m = {}
-    for j, name in enumerate(TARGET_NAMES):
-        m[f"rmse_N_{name}"] = float(np.sqrt(np.mean((pred[:, j] - true[:, j]) ** 2)))
-        m[f"pearson_r_{name}"] = _pearson(pred[:, j : j + 1], true[:, j : j + 1])
-    # 合成幅值：每足每帧的三维合力幅值 ||F||，跨双足与帧 pooled
-    mag_pred = np.concatenate(
-        [np.linalg.norm(p.reshape(-1, 2, 3), axis=2).ravel() for p in preds]
-    )
-    mag_true = np.concatenate(
-        [np.linalg.norm(t.reshape(-1, 2, 3), axis=2).ravel() for t in trues]
-    )
-    m["rmse_N_resultant"] = float(np.sqrt(np.mean((mag_pred - mag_true) ** 2)))
-    m["pearson_r_resultant"] = _pearson(
-        mag_pred[:, None], mag_true[:, None]
-    )
-    return m
+def fold_metrics(preds, trues, weight_N):
+    """委托 metrics.fold_metrics（N + %BW + 辅助指标），保持模块内名字可用。"""
+    return metrics_fold_metrics(preds, trues, weight_N)
 
 
 def plot_fold_prediction(out_path, pred, true, test_subject, trial_name):
@@ -322,7 +294,7 @@ def run_loso(trials, cfg, device, out_dir=None):
             "test_subject": test_z,
             "n_test_trials": len(preds),
             "n_test_windows": sum(d["n_windows"] for d in trial_details),
-            **fold_metrics(preds, trues),
+            **fold_metrics(preds, trues, SUBJECT_WEIGHT_N[test_z]),
         }
         fold_rows.append(row)
         fold_details.append(
