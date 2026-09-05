@@ -83,3 +83,7 @@ INVALID_TRIALS = {("z1", "03"), ("z1", "04")}
 # 运动学特征前端的静态基线帧数：步态 trial 均以站立静止开始，取开头若干帧的
 # 平均旋转作为「站立位」参考（见 features.py 模块 docstring 的数据约定）。
 STATIC_BASELINE_FRAMES = 8
+
+# 采样率（Hz）：三套采集系统（Noraxon/Qualisys/Sensor）一致。features 的
+# 数值差分用它换算成物理单位（rad/s、N/s）；metrics 的 dt = 1/FS 同源。
+SAMPLE_RATE_HZ = 100

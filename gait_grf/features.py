@@ -21,11 +21,20 @@
 
 feature_mode="kinematic_min"（共 25 维）：只留角度量（selfrel 幅值 7 +
 jointrel 幅值 6）+ 压力摘要，完全不含受绑扎旋转污染的轴向信息。
+
+动力学扩展（v2 分析 §4 A-2，2026-09-05）——rotvec 的 trial 内数值差分
+（np.gradient 中心差分、边缘二阶单侧；本函数按单 trial 调用，天然不跨边界），
+语义近似环节角速度/角加速度（GRF ≈ m·a_COM，加速度信息直接相关）：
+- feature_mode="kinematic_vel"（72 维）：kinematic + selfrel rotvec 一阶差分；
+- feature_mode="kinematic_acc"（93 维）：+ selfrel rotvec 二阶差分（角加速度）；
+- feature_mode="kinematic_dyn"（123 维）：+ jointrel rotvec 一阶差分 +
+  压力摘要一阶差分（加载率）。
+三档阶梯用于探针消融：姿态 -> +速度 -> +加速度 -> +关节速度/压力变化率。
 """
 
 import numpy as np
 
-from .constants import FEATURE_COLS, STATIC_BASELINE_FRAMES
+from .constants import FEATURE_COLS, SAMPLE_RATE_HZ, STATIC_BASELINE_FRAMES
 
 # 传感器 -> 四元数列号（大腿/小腿/躯干原始列名 q1–q4，双足 q0–q3，
 # 见 data/subjectdata/docs/subject_info.md），加载后统一按 (w,x,y,z) 处理。
@@ -53,8 +62,16 @@ _JOINT_PAIRS = (
 _PRESSURE_REGIONS = ((0, 15), (15, 30), (30, 45))
 
 # 支持的特征模式：raw=原始 120 维；kinematic=运动学前端全量（51 维）；
-# kinematic_min=仅角度量+压力摘要（25 维）
-FEATURE_MODES = ("raw", "kinematic", "kinematic_min")
+# kinematic_min=仅角度量+压力摘要（25 维）；kinematic_vel/acc/dyn=动力学
+# 扩展阶梯（72/93/123 维，见模块 docstring）
+FEATURE_MODES = (
+    "raw",
+    "kinematic",
+    "kinematic_min",
+    "kinematic_vel",
+    "kinematic_acc",
+    "kinematic_dyn",
+)
 
 _SELFREL_COLS = [f"{s}_selfrel_r{a}" for s in _SENSOR_QIDX for a in ("x", "y", "z")]
 _JOINTREL_COLS = [f"{j}_rel_r{a}" for j, _, _ in _JOINT_PAIRS for a in ("x", "y", "z")]
@@ -65,25 +82,49 @@ _PRESS_SUMMARY_COLS = [
 ]
 _SELFREL_ANGLE_COLS = [f"{s}_selfrel_angle" for s in _SENSOR_QIDX]
 _JOINTREL_ANGLE_COLS = [f"{j}_rel_angle" for j, _, _ in _JOINT_PAIRS]
+# 动力学块：_d1 = 一阶差分（角速度/变化率），_d2 = 二阶差分（角加速度）
+_SELFREL_VEL_COLS = [f"{s}_selfrel_r{a}_d1" for s in _SENSOR_QIDX for a in ("x", "y", "z")]
+_SELFREL_ACC_COLS = [f"{s}_selfrel_r{a}_d2" for s in _SENSOR_QIDX for a in ("x", "y", "z")]
+_JOINTREL_VEL_COLS = [f"{j}_rel_r{a}_d1" for j, _, _ in _JOINT_PAIRS for a in ("x", "y", "z")]
+_PRESS_VEL_COLS = [
+    f"{foot}_{stat}_d1"
+    for foot in ("right", "left")
+    for stat in ("sum", "max", "area", "region1", "region2", "region3")
+]
 
 
 def kinematic_feature_names(mode="kinematic"):
     """按模式返回运动学特征列名（顺序与 derive_kinematic_features 输出一致）。"""
     if mode == "kinematic_min":
         return _SELFREL_ANGLE_COLS + _JOINTREL_ANGLE_COLS + _PRESS_SUMMARY_COLS
-    return _SELFREL_COLS + _JOINTREL_COLS + _PRESS_SUMMARY_COLS
+    if mode == "kinematic":
+        return _SELFREL_COLS + _JOINTREL_COLS + _PRESS_SUMMARY_COLS
+    if mode == "kinematic_vel":
+        return _SELFREL_COLS + _SELFREL_VEL_COLS + _JOINTREL_COLS + _PRESS_SUMMARY_COLS
+    if mode == "kinematic_acc":
+        return (
+            _SELFREL_COLS + _SELFREL_VEL_COLS + _SELFREL_ACC_COLS
+            + _JOINTREL_COLS + _PRESS_SUMMARY_COLS
+        )
+    if mode == "kinematic_dyn":
+        return (
+            _SELFREL_COLS + _SELFREL_VEL_COLS + _SELFREL_ACC_COLS
+            + _JOINTREL_COLS + _JOINTREL_VEL_COLS
+            + _PRESS_SUMMARY_COLS + _PRESS_VEL_COLS
+        )
+    raise ValueError(f"未知特征模式 {mode!r}，可选：{FEATURE_MODES}")
 
 
 def feature_dim(mode="raw"):
     """按特征模式返回输入维数（evaluate.py 从 checkpoint config 重建模型用）。
 
-    raw -> len(FEATURE_COLS)（120）；kinematic / kinematic_min -> 对应特征列数。
+    raw -> len(FEATURE_COLS)（120）；其余模式 -> 对应特征列数。
     优先级低于 checkpoint 内显式保存的 input_size（train 侧写入，见
     train.train_one_fold），仅在旧 checkpoint 缺该字段时作为回退。
     """
     if mode == "raw":
         return len(FEATURE_COLS)
-    if mode in ("kinematic", "kinematic_min"):
+    if mode in FEATURE_MODES:
         return len(kinematic_feature_names(mode))
     raise ValueError(f"未知特征模式 {mode!r}，可选：{FEATURE_MODES}")
 
@@ -159,29 +200,69 @@ def derive_kinematic_features(sensor_df, mode="kinematic"):
     # ΔM(t) = M(t0)⁻¹ ⊗ M(t)：上电参考系在乘法中严格相消
     selfrel_q = {s: static_selfrel(quats[s]) for s in _SENSOR_QIDX}
 
-    blocks = []
     if mode == "kinematic_min":
-        selfrel_block = np.linalg.norm(
-            np.concatenate([selfrel_q[s] for s in _SENSOR_QIDX], axis=0), axis=1
-        )
-        n = len(quats["trunk"])
-        blocks.append(selfrel_block.reshape(7, n).T)  # (N,7) 幅值
+        blocks = [
+            np.linalg.norm(
+                np.concatenate([selfrel_q[s] for s in _SENSOR_QIDX], axis=0), axis=1
+            ).reshape(7, len(quats["trunk"])).T  # (N,7) 幅值
+        ]
+        blocks.append(np.concatenate(
+            [np.linalg.norm(rv, axis=1, keepdims=True) for rv in _joint_rotvecs(selfrel_q)],
+            axis=1,
+        ))
+        blocks.append(_pressure_summary(sensor_df))
+        feats = np.concatenate(blocks, axis=1)
     else:
-        blocks.append(
-            np.concatenate([quat_to_rotvec(selfrel_q[s]) for s in _SENSOR_QIDX], axis=1)
-        )
+        selfrel = np.concatenate(
+            [quat_to_rotvec(selfrel_q[s]) for s in _SENSOR_QIDX], axis=1
+        )  # (N,21) 基线相对姿态
+        jointrel = np.concatenate(_joint_rotvecs(selfrel_q), axis=1)  # (N,18)
+        press = _pressure_summary(sensor_df)  # (N,12)
 
-    # 关节相对运动：ΔM_p⁻¹ ⊗ ΔM_c（上电参考系 + 共模晃动相消）
-    joint_blocks = []
-    for _, parent, child in _JOINT_PAIRS:
-        rv = quat_to_rotvec(quat_multiply(quat_conj(selfrel_q[parent]), selfrel_q[child]))
-        if mode == "kinematic_min":
-            joint_blocks.append(np.linalg.norm(rv, axis=1, keepdims=True))
-        else:
-            joint_blocks.append(rv)
-    blocks.append(np.concatenate(joint_blocks, axis=1))
+        blocks = [selfrel]
+        if mode in ("kinematic_vel", "kinematic_acc", "kinematic_dyn"):
+            blocks.append(_diff(selfrel))  # 环节角速度
+        if mode in ("kinematic_acc", "kinematic_dyn"):
+            blocks.append(_diff(_diff(selfrel)))  # 环节角加速度
+        blocks.append(jointrel)
+        if mode == "kinematic_dyn":
+            blocks.append(_diff(jointrel))  # 关节角速度
+        blocks.append(press)
+        if mode == "kinematic_dyn":
+            blocks.append(_diff(press))  # 压力变化率（加载率）
+        feats = np.concatenate(blocks, axis=1)
 
-    # 压力摘要：每足 总和/峰值/接触面积/三个区段和
+    expected = len(kinematic_feature_names(mode))
+    if feats.shape[1] != expected:
+        raise AssertionError(f"特征维数 {feats.shape[1]} 与列名数 {expected} 不一致")
+    return feats.astype(np.float32)
+
+
+def _diff(a):
+    """trial 内数值差分（中心差分，边缘二阶单侧），按采样率换算为物理单位。
+
+    返回 d/dt（如 selfrel rotvec 的差分 = 环节角速度 rad/s）。调用方保证 a
+    属于单一 trial（本模块按 trial 调用，不跨边界差分）。极短序列安全退化：
+    <2 帧返回全零，<3 帧用一阶边缘差分。
+    """
+    dt = 1.0 / SAMPLE_RATE_HZ
+    if len(a) < 2:
+        return np.zeros_like(a)
+    if len(a) < 3:
+        return np.gradient(a, dt, axis=0, edge_order=1)
+    return np.gradient(a, dt, axis=0, edge_order=2)
+
+
+def _joint_rotvecs(selfrel_q):
+    """关节相对运动 rotvec 列表：ΔM_p⁻¹ ⊗ ΔM_c（上电参考系 + 共模晃动相消）。"""
+    return [
+        quat_to_rotvec(quat_multiply(quat_conj(selfrel_q[parent]), selfrel_q[child]))
+        for _, parent, child in _JOINT_PAIRS
+    ]
+
+
+def _pressure_summary(sensor_df):
+    """压力摘要 (N,12)：每足 总和/峰值/接触面积/三个区段和（列序 _PRESS_SUMMARY_COLS）。"""
     press = []
     for foot in ("right", "left"):
         p = sensor_df[[f"{foot}_pressure{i}" for i in range(45)]].to_numpy(dtype=float)
@@ -190,10 +271,4 @@ def derive_kinematic_features(sensor_df, mode="kinematic"):
         area = (p > 0.05 * np.maximum(peak, 1e-9)).sum(axis=1, keepdims=True).astype(float)
         regions = [p[:, lo:hi].sum(axis=1, keepdims=True) for lo, hi in _PRESSURE_REGIONS]
         press.append(np.concatenate([total, peak, area] + regions, axis=1))
-    blocks.append(np.concatenate(press, axis=1))
-
-    feats = np.concatenate(blocks, axis=1)
-    expected = len(kinematic_feature_names(mode))
-    if feats.shape[1] != expected:
-        raise AssertionError(f"特征维数 {feats.shape[1]} 与列名数 {expected} 不一致")
-    return feats.astype(np.float32)
+    return np.concatenate(press, axis=1)

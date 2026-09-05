@@ -4,7 +4,7 @@
 - 依据代码：`gait_grf/` 全部 9 个模块（1496 行）+ `ncps-master/`（上游 mlech26l/ncps v1.0.1 源码）
 - 依据结果：`runs/ltc_kinematic/`（EXP-002，kinematic 特征 + LTC 128×2）
 - 结论一句话：**表征改造（EXP-002，r 0.869→0.920）验证了 v1 的主推方向；本轮全量代码审读发现 1 个阻塞性 bug（evaluate.py 硬编码输入维度）、1 个被误判的数据层问题（right_vx 全员偏弱而非 z8 特有）、1 个错误的技术判断（AutoNCP 不省算力），并给出下一阶段的优先级路线。**
-- 追记（同日）：evaluate.py bug 已修（60 测试全绿）；拼接方式实验已完成并**否定** §2.3 削峰假设（详见 §2.3 实验结论与 `experiment-log.md`）。
+- 追记（同日）：evaluate.py bug 已修（测试 60 全绿）；拼接方式实验已完成并**否定** §2.3 削峰假设；A-2 动力学特征探针已完成且**正向**（resultant r 0.638→0.684，详见 §4 与 `experiment-log.md`）。
 
 ---
 
@@ -127,7 +127,7 @@ FLOP 与显存流量完全不减少。稀疏 wiring（NCP/AutoNCP/Random）只�
 |---|---|---|---|
 | 0 | ~~修 evaluate.py bug~~ **已完成（2026-09-05）** | 10 分钟 | 按 checkpoint `input_size`（新）/`feature_mode`（旧，经 `features.feature_dim`）推断；uniform 复算与训练口径逐折一致 |
 | 1 | ~~拼接方式实验~~ **已完成（2026-09-05，否定）** | 免重训 | uniform/hann/center 无差异（§2.3 实验结论）：跨窗预测 std 中位 0.00–0.09 N，拼接不构成信息损失，保持 uniform |
-| 2 | **动力学特征：rotvec 一/二阶差分** | 探针分钟级 | 现在特征只有姿态没有速度/加速度；GRF ≈ m·a_COM，角速度/角加速度+压力差分是下一块最可能的显著提升；`probe.py` 先验 |
+| 2 | ~~动力学特征：rotvec 一/二阶差分~~ **已完成（2026-09-05，正向）** | 探针分钟级 | 新增 kinematic_vel(72)/acc(93)/dyn(123) 三档阶梯；探针 resultant r 0.638→0.675(vel)/0.684(dyn)，α 三档稳健，7/8 折正向（配对 t≈4.2）。**增益主体是一阶差分（角速度 +0.038）**，acc/关节速度/压力变化率边际 +0.008；vz 获益最大、R_vx 微降（再证右足 vx 是数据质量问题）。建议 EXP-003 用 kinematic_dyn（详见 experiment-log 探针条目） |
 | 3 | **grad clip + LR scheduler** | 几行 | v1 §2.3 遗留；clip norm 1.0 + cosine 或 plateau |
 | 4 | **左右镜像增广** | 低 | 交换左右 sensor 列+压力块+target 前后半 → 数据翻倍 + 双边对称先验；8 人数据量下很值；注意与 §2.2 的右足 vx 排查联动（若右足信号本身弱，镜像会把弱侧复制到左足） |
 | 5 | **测试受试者 transductive scaler refit** | 低 | 部署场景可穿戴自校准（无标签）合法；直接针对 z7 类域偏移 |
@@ -147,7 +147,7 @@ FLOP 与显存流量完全不减少。稀疏 wiring（NCP/AutoNCP/Random）只�
 
 ### 建议执行顺序
 
-**§4-A0 修 bug ✅ → A1 拼接实验 ✅（否定，见 §2.3）→ 下一步：A2 探针验证动力学特征 → C12 提速基建 → A4 镜像增广 + B6 峰值加权 + B8 基线（带着提速跑）→ C10 拍板因果性后决定是否上双向**。
+**§4-A0 修 bug ✅ → A1 拼接实验 ✅（否定，见 §2.3）→ A2 动力学特征探针 ✅（正向 +0.046，见 experiment-log）→ 下一步：EXP-003（LTC + kinematic_dyn，~4h）与 C12 提速基建 → A4 镜像增广 + B6 峰值加权 + B8 基线（基线沿用 EXP-003 特征）→ C10 拍板因果性后决定是否上双向**。
 
 ---
 

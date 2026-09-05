@@ -16,9 +16,9 @@
 
 import numpy as np
 
-from .constants import TARGET_COLS
+from .constants import SAMPLE_RATE_HZ, TARGET_COLS
 
-FS = 100  # Hz，三套采集系统一致
+FS = SAMPLE_RATE_HZ  # Hz，三套采集系统一致（单源：constants.SAMPLE_RATE_HZ）
 
 
 def _pearson(pred, true):

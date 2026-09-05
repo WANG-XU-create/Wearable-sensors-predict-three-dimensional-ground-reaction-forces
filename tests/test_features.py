@@ -142,11 +142,48 @@ def test_derive_shapes_and_finiteness():
     df = make_sensor_df(quats)
     from gait_grf.features import derive_kinematic_features
 
-    for mode in ("kinematic", "kinematic_min"):
+    for mode in ("kinematic", "kinematic_min", "kinematic_vel", "kinematic_acc", "kinematic_dyn"):
         f = derive_kinematic_features(df, mode=mode)
-        assert f.shape == (50, len(kinematic_feature_names(mode)))
-        assert np.isfinite(f).all()
+        assert f.shape == (50, len(kinematic_feature_names(mode))), mode
+        assert np.isfinite(f).all(), mode
         assert f.dtype == np.float32
+
+
+def test_dynamics_vel_acc_of_constant_rotation():
+    """绕固定轴匀速旋转：selfrel rotvec 线性增长 -> vel = 常量角速度、acc = 0。
+
+    匀速旋转的四元数沿大圆弧演化，static_selfrel 相对任意基线仍是同轴旋转
+    （同轴旋转可交换），rotvec = axis*(theta(t)-beta) 严格线性。
+    """
+    from gait_grf.features import derive_kinematic_features
+
+    n, omega, fs = 60, 0.8, 100.0
+    axis = np.array([0.2, 0.5, 0.84]); axis = axis / np.linalg.norm(axis)
+    t = np.arange(n) / fs
+    q = axis_angle_quat(axis, omega * t)  # (n,4)
+    quats = {s: q for s in _SENSOR_QIDX}
+    df = make_sensor_df(quats)
+
+    f = derive_kinematic_features(df, mode="kinematic_acc")
+    names = kinematic_feature_names("kinematic_acc")
+    # vel 块 = selfrel rotvec 的一阶差分；acc 块 = 二阶差分
+    vel = f[:, [names.index(f"{s}_selfrel_r{a}_d1") for s in _SENSOR_QIDX for a in "xyz"]]
+    acc = f[:, [names.index(f"{s}_selfrel_r{a}_d2") for s in _SENSOR_QIDX for a in "xyz"]]
+    np.testing.assert_allclose(vel, np.tile(axis * omega, (n, 7)), atol=1e-5)
+    np.testing.assert_allclose(acc, np.zeros((n, 21)), atol=1e-6)
+
+
+def test_dynamics_diff_degenerate_lengths():
+    """极短 trial 安全退化（<2 帧全零、<3 帧一阶边缘），不抛异常。"""
+    from gait_grf.features import derive_kinematic_features
+
+    for n in (1, 2):
+        quats = {s: axis_angle_quat([0, 0, 1.0], np.linspace(0, 0.2, n) * np.arange(n))
+                 for s in _SENSOR_QIDX}
+        df = make_sensor_df(quats)
+        f = derive_kinematic_features(df, mode="kinematic_dyn")
+        assert f.shape == (n, len(kinematic_feature_names("kinematic_dyn")))
+        assert np.isfinite(f).all()
 
 
 def test_invalid_trials_registered():
@@ -158,6 +195,9 @@ def test_feature_dim_matches_modes():
     assert feature_dim("raw") == len(FEATURE_COLS) == 120
     assert feature_dim("kinematic") == len(kinematic_feature_names("kinematic")) == 51
     assert feature_dim("kinematic_min") == len(kinematic_feature_names("kinematic_min")) == 25
+    assert feature_dim("kinematic_vel") == 72   # 51 + selfrel 角速度 21
+    assert feature_dim("kinematic_acc") == 93   # + selfrel 角加速度 21
+    assert feature_dim("kinematic_dyn") == 123  # + jointrel 角速度 18 + 压力变化率 12
 
 
 def test_feature_dim_rejects_unknown_mode():
