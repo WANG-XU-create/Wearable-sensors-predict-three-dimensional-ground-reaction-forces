@@ -4,6 +4,7 @@
 - 依据代码：`gait_grf/models.py`、`gait_grf/data.py`、`gait_grf/train.py`、`gait_grf/constants.py`（ncps 1.0.1）
 - 依据结果：`runs/tracer_loso8/`（基线）、`runs/ltc_full/`（首次完整 LTC，见 `docs/experiment-log.md`）
 - 结论一句话：**容量不是瓶颈，表征才是。改进主方向是构建跨受试者可迁移的物理先验特征前端（关节角 + 压力摘要），而非加大模型。**
+- 后续：第二轮全量代码审读与改进路线见 **`ltc-improvement-analysis-v2.md`**（含 EXP-002 复盘，并修正本文两处判断：§1 的 z8 右足 vx 归因——实为 8/8 受试者全员偏弱、属数据层问题；§4/§6.4 的 AutoNCP 提速——torch 实现中稀疏 mask 不省算力，提速正解为 ode_unfolds/CfC）。
 
 ## 1. 现状基线
 
@@ -118,6 +119,5 @@
 
 ### 6.4 待办
 
-- LTC 全量 8 折：`python -m gait_grf.train --data-root data/subjectdata --out-dir runs/ltc_kinematic --features kinematic --hidden 128 --layers 2 --dropout 0.3 --epochs 100`（训练侧输入 120→51，预计用时显著低于 3h55m），结果登记 `docs/experiment-log.md` EXP-002；
-- 若 kinematic 与 min 差距在 LTC 上依然存在，保留 rotvec 轴向；否则可退化到 25 维进一步提速；
-- 次要项（grad clip / AutoNCP）仍待做（见第 4 节）。
+- ~~LTC 全量 8 折（kinematic）~~ **已完成（EXP-002，2026-09-05）**：合成幅值 r 0.8689→**0.9202**（+0.051），8/8 折全部提升，RMSE %BW −15.6%；逐折与训练动态见 `docs/experiment-log.md`。z7 仍离群（0.764，+0.083 为其历史最大提升）；z8 右足 vx 0.303→0.476 仍最差；峰值误差 vy 略回退（预测偏平滑）。每折 ~30 min 未缩短——瓶颈在递归 ODE，提速需 AutoNCP/减层。
+- 次要项（grad clip / AutoNCP / 峰值加权损失）待做（见第 4 节）。

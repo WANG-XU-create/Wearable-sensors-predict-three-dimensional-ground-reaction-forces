@@ -107,6 +107,9 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
     scalers = (fit_ds.feature_scaler, fit_ds.target_scaler)
     X = torch.from_numpy(fit_ds.X)
     y = torch.from_numpy(fit_ds.y)
+    # 随 checkpoint config / summary.json 保存，evaluate 重建模型时不再依赖
+    # 对特征模式维数的硬编码（旧 checkpoint 无此字段，由 feature_dim 回退）
+    cfg["input_size"] = int(X.shape[-1])
 
     val_ds = None
     if val_pairs:
@@ -173,9 +176,62 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
     return model, scalers, history
 
 
-def predict_trial(model, scalers, sensor_path, qualisys_path, subject, cfg, device):
-    """对单个 trial 预测：对齐 -> 滑窗 -> 逐窗预测 -> 重叠帧平均 -> 反变换回 N。
+# 重叠窗拼接方式（predict_trial / evaluate --stitch）
+STITCH_MODES = ("uniform", "hann", "center")
 
+
+def stitch_windows(pred, window, step, mode="uniform"):
+    """逐窗预测 (n, window, C) -> 逐帧预测 (window + (n-1)*step, C)。
+
+    - uniform：重叠帧简单平均（EXP-001/002 口径）。step < window 时每帧
+      混合多个不同时间上下文的预测，等价 box filter，波峰被系统性削低；
+    - hann：窗内 Hann 余弦权重重叠相加（中心权重 1、两端趋 0），缓解削峰。
+      权重和近 0 的帧（序列首尾，仅有端点权重的窗覆盖）退回 uniform；
+    - center：每帧取「窗口中心距该帧最近」的那一窗预测，不做任何平均。
+      window=100、step=10 时即每窗只贡献中心 10 帧，首尾无中心覆盖的帧
+      自动贴最近窗（clip 到 [0, n-1]）。
+    """
+    n, w, c = pred.shape
+    t_cov = w + (n - 1) * step
+    if mode not in STITCH_MODES:
+        raise ValueError(f"未知拼接模式 {mode!r}，可选：{STITCH_MODES}")
+
+    if mode == "center":
+        t = np.arange(t_cov)
+        k = np.clip(np.round((t - (w - 1) / 2.0) / step), 0, n - 1).astype(int)
+        return pred[k, t - k * step]
+
+    if mode == "hann":
+        if w > 1:
+            j = np.arange(w)
+            win = 0.5 * (1.0 - np.cos(2.0 * np.pi * j / (w - 1)))
+        else:
+            win = np.ones(1)
+    else:
+        win = np.ones(w)
+
+    acc = np.zeros((t_cov, c), dtype=np.float64)
+    wsum = np.zeros(t_cov)
+    cnt = np.zeros(t_cov)
+    uni = np.zeros((t_cov, c), dtype=np.float64)
+    for k in range(n):
+        s = k * step
+        acc[s : s + w] += pred[k] * win[:, None]
+        wsum[s : s + w] += win
+        uni[s : s + w] += pred[k]
+        cnt[s : s + w] += 1
+    out = acc / np.maximum(wsum, 1e-12)[:, None]
+    # Hann 两端权重为 0 的帧：退回覆盖窗的简单平均
+    bare = wsum < 1e-12
+    out[bare] = uni[bare] / cnt[bare, None]
+    return out
+
+
+def predict_trial(model, scalers, sensor_path, qualisys_path, subject, cfg, device):
+    """对单个 trial 预测：对齐 -> 滑窗 -> 逐窗预测 -> 拼接 -> 反变换回 N。
+
+    重叠帧按 cfg["stitch"]（默认 uniform，即历史口径的简单平均）拼接，
+    见 stitch_windows；拼接方式是纯评估期参数，训练不受影响。
     返回 (pred_N, true_N, n_windows)，数组长度为滑窗覆盖到的帧数
     （= window + (n_windows-1)*step，trial 尾部不足一个步进的帧不参与评估）。
     """
@@ -198,15 +254,9 @@ def predict_trial(model, scalers, sensor_path, qualisys_path, subject, cfg, devi
         pred_z.reshape(-1, pred_z.shape[-1])
     ).reshape(pred_z.shape)
 
-    # 重叠帧平均：第 k 窗覆盖帧 [k*step, k*step+window)
+    # 拼接：第 k 窗覆盖帧 [k*step, k*step+window)
     t_cov = w + (n - 1) * cfg["step"]
-    acc = np.zeros((t_cov, pred_N.shape[-1]), dtype=np.float64)
-    cnt = np.zeros(t_cov)
-    for k in range(n):
-        s = k * cfg["step"]
-        acc[s : s + w] += pred_N[k]
-        cnt[s : s + w] += 1
-    pred_frame = acc / cnt[:, None]
+    pred_frame = stitch_windows(pred_N, w, cfg["step"], cfg.get("stitch", "uniform"))
     return pred_frame, targets[:t_cov], n
 
 

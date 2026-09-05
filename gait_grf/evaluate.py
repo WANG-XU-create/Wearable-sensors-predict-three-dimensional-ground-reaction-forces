@@ -5,14 +5,21 @@
 （内含权重 + scaler + 配置 + 测试受试者），对留出受试者的全部 trial
 重新预测（与训练时同一 LOSO 划分：测试集 = 留出受试者全部 trial）。
 
+模型输入维度优先取 checkpoint config 内的 input_size（train 保存）；
+旧 checkpoint 无该字段时按 config 的 feature_mode 经 features.feature_dim
+推断（曾硬编码 120，导致 kinematic 51 维 checkpoint 无法后置评估）。
+
 用法：
     python -m gait_grf.evaluate --run-dir runs/ltc_full_loso8 \
-        --data-root data/subjectdata
+        --data-root data/subjectdata [--stitch uniform|hann|center]
 
-输出（写入 run-dir）：
-    metrics_full.csv             每折一行的全量指标（列 = metrics.csv 扩充
-                                 %BW/辅助指标）
-    metrics_full_aggregate.json  跨折 mean/std 汇总
+--stitch 是纯评估期的重叠窗拼接方式（默认 uniform = 训练时口径），
+用于免重训对比拼接对峰值误差的影响（见 train.stitch_windows）。
+
+输出（写入 run-dir；stitch != uniform 时文件名带后缀）：
+    metrics_full[_<stitch>].csv             每折一行的全量指标（列 =
+                                            metrics.csv 扩充 %BW/辅助指标）
+    metrics_full[_<stitch>]_aggregate.json  跨折 mean/std 汇总
 也支持部分完成的运行（逐 checkpoint 处理，缺的折跳过）。
 """
 
@@ -25,26 +32,32 @@ import re
 import pandas as pd
 import torch
 
-from .constants import FEATURE_COLS, SUBJECT_WEIGHT_N
+from .constants import SUBJECT_WEIGHT_N
 from .data import discover_trial_pairs
+from .features import feature_dim
 from .metrics import fold_metrics
 from .models import make_model
-from .train import predict_trial
+from .train import STITCH_MODES, predict_trial
 
 
-def evaluate_run(run_dir, data_root, device):
-    """评估 run 目录下全部 checkpoint，返回逐折指标 dict 列表。"""
+def evaluate_run(run_dir, data_root, device, stitch="uniform"):
+    """评估 run 目录下全部 checkpoint，返回逐折指标 dict 列表。
+
+    stitch 为重叠窗拼接方式（train.STITCH_MODES），作为评估期参数
+    覆盖进各 checkpoint 的 cfg，不影响训练产物。
+    """
     ckpts = sorted(glob.glob(os.path.join(run_dir, "model_fold*.pt")))
     if not ckpts:
         raise SystemExit(f"{run_dir} 下没有 model_fold*.pt checkpoint")
     rows = []
     for ck in ckpts:
         blob = torch.load(ck, map_location=device, weights_only=False)
-        cfg = blob["config"]
+        cfg = dict(blob["config"])
+        cfg["stitch"] = stitch
         test_z = blob["test_subject"]
         model = make_model(
             cfg["model"],
-            input_size=len(FEATURE_COLS),
+            input_size=cfg.get("input_size", feature_dim(cfg.get("feature_mode", "raw"))),
             hidden=cfg["hidden"],
             layers=cfg["layers"],
             dropout=cfg["dropout"],
@@ -90,8 +103,19 @@ def main(argv=None):
     )
     parser.add_argument("--run-dir", required=True, help="含 model_fold*.pt 的运行目录")
     parser.add_argument("--data-root", required=True, help="subjectdata 目录")
-    parser.add_argument("--out", default="metrics_full.csv",
-                        help="输出文件名（写入 run-dir）")
+    parser.add_argument(
+        "--stitch",
+        default="uniform",
+        choices=list(STITCH_MODES),
+        help="重叠窗拼接方式：uniform=简单平均（默认，训练时口径）；hann=Hann"
+             "加权；center=每帧取中心最近窗（拼接削峰对比实验）",
+    )
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="输出文件名（写入 run-dir）；默认 metrics_full.csv（stitch != "
+             "uniform 时为 metrics_full_<stitch>.csv）",
+    )
     parser.add_argument(
         "--device",
         default="auto",
@@ -104,9 +128,13 @@ def main(argv=None):
     else:
         device = torch.device(args.device)
 
-    rows = evaluate_run(args.run_dir, args.data_root, device)
+    rows = evaluate_run(args.run_dir, args.data_root, device, stitch=args.stitch)
     df = pd.DataFrame(rows).sort_values("fold").reset_index(drop=True)
-    out_path = os.path.join(args.run_dir, args.out)
+    out_name = args.out or (
+        "metrics_full.csv" if args.stitch == "uniform"
+        else f"metrics_full_{args.stitch}.csv"
+    )
+    out_path = os.path.join(args.run_dir, out_name)
     df.to_csv(out_path, index=False)
 
     agg = {
@@ -116,12 +144,13 @@ def main(argv=None):
     }
     agg_path = out_path.replace(".csv", "_aggregate.json")
     with open(agg_path, "w", encoding="utf-8") as f:
-        json.dump({"n_folds_evaluated": len(df), "aggregate": agg}, f,
-                  ensure_ascii=False, indent=2)
+        json.dump({"n_folds_evaluated": len(df), "stitch": args.stitch,
+                   "aggregate": agg}, f, ensure_ascii=False, indent=2)
 
-    print(f"\n指标已写入 {out_path}（汇总 {agg_path}）")
+    print(f"\n指标已写入 {out_path}（汇总 {agg_path}，stitch={args.stitch}）")
     show = ["fold", "test_subject",
             "rmse_pctbw_ground_force_left_vy", "rmse_pctbw_ground_force_right_vy",
+            "peak_err_pctbw_ground_force_left_vy", "peak_err_pctbw_ground_force_right_vy",
             "rmse_pctbw_resultant", "pearson_r_resultant"]
     with pd.option_context("display.width", 250):
         print(df[show].round(3).to_string(index=False))

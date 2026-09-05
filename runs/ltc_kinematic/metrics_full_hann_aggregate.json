@@ -1,0 +1,162 @@
+{
+  "n_folds_evaluated": 8,
+  "stitch": "hann",
+  "aggregate": {
+    "rmse_N_ground_force_left_vx": {
+      "mean": 9.712142514478504,
+      "std": 1.8893537964677272
+    },
+    "rmse_pctbw_ground_force_left_vx": {
+      "mean": 1.4635739158713736,
+      "std": 0.4111880499749096
+    },
+    "pearson_r_ground_force_left_vx": {
+      "mean": 0.8417511584376727,
+      "std": 0.09141838444080917
+    },
+    "rmse_N_ground_force_left_vy": {
+      "mean": 136.7945542316574,
+      "std": 30.46456165565146
+    },
+    "rmse_pctbw_ground_force_left_vy": {
+      "mean": 20.74846299442565,
+      "std": 6.571078713125818
+    },
+    "pearson_r_ground_force_left_vy": {
+      "mean": 0.9237372028058775,
+      "std": 0.05201009637212327
+    },
+    "rmse_N_ground_force_left_vz": {
+      "mean": 18.60874898382869,
+      "std": 6.451254028580928
+    },
+    "rmse_pctbw_ground_force_left_vz": {
+      "mean": 2.8535509325129937,
+      "std": 1.2118820356196742
+    },
+    "pearson_r_ground_force_left_vz": {
+      "mean": 0.8309991225040184,
+      "std": 0.08950182500884873
+    },
+    "rmse_N_ground_force_right_vx": {
+      "mean": 16.740018762135044,
+      "std": 2.7844855566538227
+    },
+    "rmse_pctbw_ground_force_right_vx": {
+      "mean": 2.474648073653074,
+      "std": 0.3605881379210112
+    },
+    "pearson_r_ground_force_right_vx": {
+      "mean": 0.6796185928359222,
+      "std": 0.10684190640437954
+    },
+    "rmse_N_ground_force_right_vy": {
+      "mean": 134.1730912182607,
+      "std": 34.07833974329814
+    },
+    "rmse_pctbw_ground_force_right_vy": {
+      "mean": 20.394316419448682,
+      "std": 7.469017944304031
+    },
+    "pearson_r_ground_force_right_vy": {
+      "mean": 0.9251592003430711,
+      "std": 0.06165232456763603
+    },
+    "rmse_N_ground_force_right_vz": {
+      "mean": 24.518366373376367,
+      "std": 3.9823880134373693
+    },
+    "rmse_pctbw_ground_force_right_vz": {
+      "mean": 3.627160462479719,
+      "std": 0.4596664149134109
+    },
+    "pearson_r_ground_force_right_vz": {
+      "mean": 0.8186014408659258,
+      "std": 0.07348392084397717
+    },
+    "rmse_N_resultant": {
+      "mean": 130.95609516982023,
+      "std": 29.353042312256
+    },
+    "rmse_pctbw_resultant": {
+      "mean": 19.862572568305417,
+      "std": 6.488154986108899
+    },
+    "pearson_r_resultant": {
+      "mean": 0.9203860953979999,
+      "std": 0.059948229441825755
+    },
+    "peak_err_pctbw_ground_force_left_vx": {
+      "mean": 0.8823867587268123,
+      "std": 0.29733144277909906
+    },
+    "impulse_err_pctbw_s_ground_force_left_vx": {
+      "mean": 1.6288103134448155,
+      "std": 0.727872132192142
+    },
+    "peak_lag_frames_ground_force_left_vx": {
+      "mean": 92.00689741756204,
+      "std": 29.00490367419864
+    },
+    "peak_err_pctbw_ground_force_left_vy": {
+      "mean": 19.63713636932607,
+      "std": 11.849398458704904
+    },
+    "impulse_err_pctbw_s_ground_force_left_vy": {
+      "mean": 16.551671708295967,
+      "std": 9.147898533166002
+    },
+    "peak_lag_frames_ground_force_left_vy": {
+      "mean": 25.430692553182823,
+      "std": 9.386810352834013
+    },
+    "peak_err_pctbw_ground_force_left_vz": {
+      "mean": 3.7952311368208758,
+      "std": 2.399599008089674
+    },
+    "impulse_err_pctbw_s_ground_force_left_vz": {
+      "mean": 1.3871890234645048,
+      "std": 0.655905751185917
+    },
+    "peak_lag_frames_ground_force_left_vz": {
+      "mean": 8.08727544239224,
+      "std": 11.277719719883647
+    },
+    "peak_err_pctbw_ground_force_right_vx": {
+      "mean": 3.2078302043694986,
+      "std": 1.2262340911024998
+    },
+    "impulse_err_pctbw_s_ground_force_right_vx": {
+      "mean": 2.4862781195319617,
+      "std": 1.0093412078793185
+    },
+    "peak_lag_frames_ground_force_right_vx": {
+      "mean": 27.673104910013976,
+      "std": 15.573657320605962
+    },
+    "peak_err_pctbw_ground_force_right_vy": {
+      "mean": 14.750397134547683,
+      "std": 5.108499669242161
+    },
+    "impulse_err_pctbw_s_ground_force_right_vy": {
+      "mean": 13.415107894751129,
+      "std": 6.595014970040659
+    },
+    "peak_lag_frames_ground_force_right_vy": {
+      "mean": 16.299217562656107,
+      "std": 12.268998733865423
+    },
+    "peak_err_pctbw_ground_force_right_vz": {
+      "mean": 5.221453014487271,
+      "std": 2.8820604021145515
+    },
+    "impulse_err_pctbw_s_ground_force_right_vz": {
+      "mean": 1.7640395166886116,
+      "std": 0.8705419291012485
+    },
+    "peak_lag_frames_ground_force_right_vz": {
+      "mean": 19.830714300993776,
+      "std": 22.320892988459295
+    }
+  }
+}

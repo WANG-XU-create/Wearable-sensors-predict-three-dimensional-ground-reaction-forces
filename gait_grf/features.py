@@ -25,7 +25,7 @@ jointrel 幅值 6）+ 压力摘要，完全不含受绑扎旋转污染的轴向�
 
 import numpy as np
 
-from .constants import STATIC_BASELINE_FRAMES
+from .constants import FEATURE_COLS, STATIC_BASELINE_FRAMES
 
 # 传感器 -> 四元数列号（大腿/小腿/躯干原始列名 q1–q4，双足 q0–q3，
 # 见 data/subjectdata/docs/subject_info.md），加载后统一按 (w,x,y,z) 处理。
@@ -72,6 +72,20 @@ def kinematic_feature_names(mode="kinematic"):
     if mode == "kinematic_min":
         return _SELFREL_ANGLE_COLS + _JOINTREL_ANGLE_COLS + _PRESS_SUMMARY_COLS
     return _SELFREL_COLS + _JOINTREL_COLS + _PRESS_SUMMARY_COLS
+
+
+def feature_dim(mode="raw"):
+    """按特征模式返回输入维数（evaluate.py 从 checkpoint config 重建模型用）。
+
+    raw -> len(FEATURE_COLS)（120）；kinematic / kinematic_min -> 对应特征列数。
+    优先级低于 checkpoint 内显式保存的 input_size（train 侧写入，见
+    train.train_one_fold），仅在旧 checkpoint 缺该字段时作为回退。
+    """
+    if mode == "raw":
+        return len(FEATURE_COLS)
+    if mode in ("kinematic", "kinematic_min"):
+        return len(kinematic_feature_names(mode))
+    raise ValueError(f"未知特征模式 {mode!r}，可选：{FEATURE_MODES}")
 
 
 def load_quat_wxyz(sensor_df, sensor):

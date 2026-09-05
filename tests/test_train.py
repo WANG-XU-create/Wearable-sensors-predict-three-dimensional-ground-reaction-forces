@@ -13,7 +13,7 @@ import torch
 
 from gait_grf.constants import FEATURE_COLS, LEFT_FOOT_PLATE, PLATE_TARGET_COLS, TARGET_COLS
 from gait_grf.data import discover_trial_pairs
-from gait_grf.train import split_val_trials, train_one_fold
+from gait_grf.train import split_val_trials, stitch_windows, train_one_fold
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -247,6 +247,152 @@ class TestTrainerEndToEnd(unittest.TestCase):
             for k, v in row.items():
                 if k != "test_subject":
                     self.assertTrue(np.isfinite(v), f"{k} 非有限")
+
+
+class TestStitchWindows(unittest.TestCase):
+    """重叠窗拼接：uniform 为历史口径，hann/center 为削峰对比实验的模式。"""
+
+    def test_uniform_matches_manual_average(self):
+        rng = np.random.default_rng(0)
+        pred = rng.standard_normal((5, 100, 6))
+        out = stitch_windows(pred, 100, 10, mode="uniform")
+        t_cov = 100 + 4 * 10
+        self.assertEqual(out.shape, (t_cov, 6))
+        for t in range(t_cov):
+            ks = [k for k in range(5) if k * 10 <= t < k * 10 + 100]
+            manual = np.mean([pred[k, t - k * 10] for k in ks], axis=0)
+            np.testing.assert_allclose(out[t], manual, rtol=1e-12)
+
+    def test_all_modes_same_shape_and_finite(self):
+        rng = np.random.default_rng(1)
+        pred = rng.standard_normal((7, 100, 6))
+        for mode in ("uniform", "hann", "center"):
+            out = stitch_windows(pred, 100, 10, mode=mode)
+            self.assertEqual(out.shape, (100 + 6 * 10, 6), mode)
+            self.assertTrue(np.isfinite(out).all(), mode)
+
+    def test_single_window_identity_for_all_modes(self):
+        # n=1：无重叠可言，三种模式都应原样返回唯一窗
+        rng = np.random.default_rng(2)
+        pred = rng.standard_normal((1, 100, 6))
+        for mode in ("uniform", "hann", "center"):
+            np.testing.assert_allclose(
+                stitch_windows(pred, 100, 10, mode=mode), pred[0], rtol=1e-12
+            )
+
+    def test_center_takes_nearest_center_window_without_averaging(self):
+        # 每窗填不同常数：center 模式每帧输出必等于某一窗的常数（无平均）
+        n, w, step = 5, 100, 10
+        pred = np.zeros((n, w, 1))
+        for k in range(n):
+            pred[k, :, 0] = k + 1.0
+        out = stitch_windows(pred, w, step, mode="center")
+        t = np.arange(out.shape[0])
+        k_expected = np.clip(np.round((t - (w - 1) / 2.0) / step), 0, n - 1).astype(int)
+        np.testing.assert_allclose(out[:, 0], k_expected + 1.0)
+
+    def test_hann_matches_weighted_reference(self):
+        # hann = 逐帧 Hann 权重加权平均；端点权重为 0 的帧退回 uniform
+        rng = np.random.default_rng(3)
+        n, w, step = 5, 100, 10
+        pred = rng.standard_normal((n, w, 6))
+        out = stitch_windows(pred, w, step, mode="hann")
+        t_cov = w + (n - 1) * step
+        j = np.arange(w)
+        win = 0.5 * (1.0 - np.cos(2.0 * np.pi * j / (w - 1)))
+        for t in range(t_cov):
+            cover = [k for k in range(n) if k * step <= t < k * step + w]
+            num = np.zeros(6)
+            den = 0.0
+            for k in cover:
+                o = t - k * step
+                num += win[o] * pred[k, o]
+                den += win[o]
+            if den > 1e-12:
+                np.testing.assert_allclose(out[t], num / den, rtol=1e-12)
+            else:  # 只有端点权重窗覆盖（序列首尾）-> uniform 回退
+                manual = np.mean([pred[k, t - k * step] for k in cover], axis=0)
+                np.testing.assert_allclose(out[t], manual, rtol=1e-12)
+
+    def test_unknown_mode_raises(self):
+        pred = np.zeros((2, 100, 6))
+        with self.assertRaises(ValueError):
+            stitch_windows(pred, 100, 10, mode="nope")
+
+
+class TestEvaluateKinematicCheckpoint(unittest.TestCase):
+    """回归：evaluate 从 checkpoint 重建模型必须用 checkpoint 的
+    feature_mode（或显式 input_size）推输入维度。
+
+    曾在 evaluate.py 硬编码 input_size=len(FEATURE_COLS)=120，导致
+    kinematic 51 维 checkpoint 的后置评估在 load_state_dict 处崩溃。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls._tmp.name
+        rng = np.random.default_rng(7)
+        _write_subject_fixture(root, "z1", "LQW", 3, rng, codes=["01", "02", "05"])
+        _write_subject_fixture(root, "z3", "HYJ", 3, rng)
+        cls.data_root = root
+        cls.out_dir = os.path.join(root, "out")
+        cls.proc = subprocess.run(
+            [
+                sys.executable, "-m", "gait_grf.train",
+                "--data-root", root,
+                "--out-dir", cls.out_dir,
+                "--subjects", "z1", "z3",
+                "--features", "kinematic",
+                "--hidden", "8",
+                "--epochs", "2",
+                "--patience", "0",
+                "--batch-size", "8",
+                "--device", "cpu",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_train_exit_zero_and_config_records_input_size(self):
+        self.assertEqual(
+            self.proc.returncode, 0,
+            f"stderr:\n{self.proc.stderr[-3000:]}\nstdout:\n{self.proc.stdout[-2000:]}",
+        )
+        ck = torch.load(
+            os.path.join(self.out_dir, "model_fold1_z1.pt"),
+            map_location="cpu", weights_only=False,
+        )
+        self.assertEqual(ck["config"].get("feature_mode"), "kinematic")
+        self.assertEqual(ck["config"].get("input_size"), 51)
+
+    def test_evaluate_rebuilds_model_from_feature_mode(self):
+        from gait_grf.evaluate import evaluate_run
+
+        rows = evaluate_run(self.out_dir, self.data_root, torch.device("cpu"))
+        self.assertEqual({r["test_subject"] for r in rows}, {"z1", "z3"})
+        for row in rows:
+            for k, v in row.items():
+                if k != "test_subject":
+                    self.assertTrue(np.isfinite(v), f"{k} 非有限")
+
+    def test_evaluate_all_stitch_modes(self):
+        from gait_grf.evaluate import evaluate_run
+
+        for stitch in ("uniform", "hann", "center"):
+            rows = evaluate_run(self.out_dir, self.data_root,
+                                torch.device("cpu"), stitch=stitch)
+            self.assertEqual(len(rows), 2, stitch)
+            for row in rows:
+                for k, v in row.items():
+                    if k != "test_subject":
+                        self.assertTrue(np.isfinite(v), f"{stitch}/{k} 非有限")
 
 
 if __name__ == "__main__":

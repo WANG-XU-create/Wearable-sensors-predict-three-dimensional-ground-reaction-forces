@@ -4,9 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gait_grf.constants import INVALID_TRIALS
+from gait_grf.constants import FEATURE_COLS, INVALID_TRIALS
 from gait_grf.features import (
     _SENSOR_QIDX,
+    feature_dim,
     kinematic_feature_names,
     load_quat_wxyz,
     quat_conj,
@@ -150,3 +151,15 @@ def test_derive_shapes_and_finiteness():
 
 def test_invalid_trials_registered():
     assert INVALID_TRIALS == {("z1", "03"), ("z1", "04")}
+
+
+def test_feature_dim_matches_modes():
+    # evaluate.py 重建模型的回退路径：维数必须与各模式实际输出一致
+    assert feature_dim("raw") == len(FEATURE_COLS) == 120
+    assert feature_dim("kinematic") == len(kinematic_feature_names("kinematic")) == 51
+    assert feature_dim("kinematic_min") == len(kinematic_feature_names("kinematic_min")) == 25
+
+
+def test_feature_dim_rejects_unknown_mode():
+    with pytest.raises(ValueError, match="未知特征模式"):
+        feature_dim("nope")
