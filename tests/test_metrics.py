@@ -28,10 +28,10 @@ class TestFoldMetrics(unittest.TestCase):
         m = fold_metrics([pred], [true], W)
         for name in TARGET_COLS:
             self.assertAlmostEqual(
-                m[f"rmse_pctbw_{name}"], m[f"rmse_N_{name}"] / W, places=9
+                m[f"rmse_pctbw_{name}"], m[f"rmse_N_{name}"] / W * 100.0, places=9
             )
         self.assertAlmostEqual(
-            m["rmse_pctbw_resultant"], m["rmse_N_resultant"] / W, places=9
+            m["rmse_pctbw_resultant"], m["rmse_N_resultant"] / W * 100.0, places=9
         )
 
     def test_perfect_prediction(self):
@@ -47,7 +47,7 @@ class TestFoldMetrics(unittest.TestCase):
             self.assertAlmostEqual(m[f"peak_lag_frames_{name}"], 0.0, places=6)
 
     def test_constant_bias_shifts_peak_and_impulse(self):
-        """恒定 +10N 偏置：RMSE=10，峰值误差=10，冲量误差=10*T/100，r 不变。"""
+        """恒定 +10N 偏置：RMSE=10，峰值误差=10N（%BW×100），冲量误差=10*T/100，r 不变。"""
         rng = np.random.default_rng(2)
         T = 150
         pred, true = _trial_pair(T, rng, shift=10.0)
@@ -55,9 +55,9 @@ class TestFoldMetrics(unittest.TestCase):
         # 左脚 vy 是第 2 列
         name = TARGET_COLS[1]
         self.assertAlmostEqual(m[f"rmse_N_{name}"], 10.0, places=6)
-        self.assertAlmostEqual(m[f"peak_err_pctbw_{name}"], 10.0 / W, places=9)
-        self.assertAlmostEqual(m[f"impulse_err_pctbw_s_{name}"], 10.0 * T / 100 / W,
-                               places=9)
+        self.assertAlmostEqual(m[f"peak_err_pctbw_{name}"], 10.0 / W * 100.0, places=9)
+        self.assertAlmostEqual(m[f"impulse_err_pctbw_s_{name}"],
+                               10.0 * T / 100 / W * 100.0, places=9)
         self.assertAlmostEqual(m[f"pearson_r_{name}"], 1.0, places=6)
 
     def test_peak_lag_detected(self):
@@ -78,7 +78,7 @@ class TestFoldMetrics(unittest.TestCase):
         p2, t2 = _trial_pair(100, rng, shift=15.0)
         m = fold_metrics([p1, p2], [t1, t2], W)
         name = TARGET_COLS[0]
-        self.assertAlmostEqual(m[f"peak_err_pctbw_{name}"], 10.0 / W, places=9)
+        self.assertAlmostEqual(m[f"peak_err_pctbw_{name}"], 10.0 / W * 100.0, places=9)
 
     def test_constant_column_gives_finite_metrics(self):
         """常量列（std=0）不产生 NaN/inf。"""

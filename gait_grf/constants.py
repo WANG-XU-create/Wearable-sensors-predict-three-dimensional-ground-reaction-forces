@@ -74,3 +74,12 @@ SUBJECT_MAP = {
 DEFAULT_WINDOW = 100  # 帧（1s @100Hz）
 DEFAULT_STEP = 10  # 帧
 DEFAULT_REFINE_RADIUS = 10  # 帧（onset 锚点附近的互相关精修半径）
+
+# 无效 trial（(受试者, 序号)）：LQW03/04（z1）传感器文件 7 个 IMU 四元数全零
+# （无 IMU 数据，2026-09-05 排查确认，仅压力列正常），对应测力台数据一并排除，
+# 不参与训练/评估。总 trial 数 226 -> 224。
+INVALID_TRIALS = {("z1", "03"), ("z1", "04")}
+
+# 运动学特征前端的静态基线帧数：步态 trial 均以站立静止开始，取开头若干帧的
+# 平均旋转作为「站立位」参考（见 features.py 模块 docstring 的数据约定）。
+STATIC_BASELINE_FRAMES = 8

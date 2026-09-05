@@ -15,9 +15,11 @@ from .constants import (
     DEFAULT_STEP,
     DEFAULT_WINDOW,
     FEATURE_COLS,
+    INVALID_TRIALS,
     LEFT_FOOT_PLATE,
     SUBJECT_MAP,
 )
+from .features import FEATURE_MODES, derive_kinematic_features, kinematic_feature_names
 
 
 def read_sensor(path):
@@ -147,8 +149,18 @@ def _clean_array(a):
     return df.to_numpy(dtype=np.float32)
 
 
-def extract_features(sensor_df):
-    return _clean_array(sensor_df[FEATURE_COLS].to_numpy(dtype=float))
+def extract_features(sensor_df, feature_mode="raw"):
+    """按特征模式提取输入特征。
+
+    - raw：原始 120 维（28 四元数 + 90 压力 + 2 和），即 ltc_full 基线的输入；
+    - kinematic / kinematic_min：features.py 的运动学特征前端（基线相对运动
+      + 压力摘要），见 features 模块 docstring。
+    """
+    if feature_mode == "raw":
+        return _clean_array(sensor_df[FEATURE_COLS].to_numpy(dtype=float))
+    if feature_mode in FEATURE_MODES:
+        return derive_kinematic_features(sensor_df, mode=feature_mode)
+    raise ValueError(f"未知特征模式 {feature_mode!r}，可选：{FEATURE_MODES}")
 
 
 def extract_targets(qualisys_df, left_plate=1):
@@ -164,8 +176,8 @@ def extract_targets(qualisys_df, left_plate=1):
 
 
 # 对齐结果缓存：LOSO 每折都要用同一批 trial，对齐是确定性的，按
-# (路径对, refine_radius, left_plate) 缓存后 8 折只做 1 次磁盘读取+对齐
-# （226 次而不是 1808 次）。全量缓存约 11MB。
+# (路径对, refine_radius, left_plate, feature_mode) 缓存后 8 折只做 1 次磁盘
+# 读取+对齐（224 次而不是 1792 次）。
 _TRIAL_CACHE = {}
 
 
@@ -173,20 +185,23 @@ def clear_trial_cache():
     _TRIAL_CACHE.clear()
 
 
-def load_aligned_trial(sensor_path, qualisys_path, subject, refine_radius=DEFAULT_REFINE_RADIUS):
+def load_aligned_trial(
+    sensor_path, qualisys_path, subject, refine_radius=DEFAULT_REFINE_RADIUS, feature_mode="raw"
+):
     """读取+对齐+提取单个 trial，返回 (features, targets)，带缓存。"""
     key = (
         os.path.abspath(sensor_path),
         os.path.abspath(qualisys_path),
         refine_radius,
         LEFT_FOOT_PLATE[subject],
+        feature_mode,
     )
     if key not in _TRIAL_CACHE:
         sensor, qual, _ = align(
             read_sensor(sensor_path), read_qualisys(qualisys_path), refine_radius
         )
         _TRIAL_CACHE[key] = (
-            extract_features(sensor),
+            extract_features(sensor, feature_mode=feature_mode),
             extract_targets(qual, left_plate=LEFT_FOOT_PLATE[subject]),
         )
     return _TRIAL_CACHE[key]
@@ -210,8 +225,11 @@ def discover_trial_pairs(subjectdata_root, subjects=None):
     """按受试者+序号发现 trial，返回 (sensor_path, qualisys_path, subject) 三元组。
 
     subject 供目标列的板->脚规范化使用（LEFT_FOOT_PLATE）。subjects 为 z{n} 集合。
+    命中 INVALID_TRIALS（如 LQW03/04 的 IMU 全零文件）的 trial 连同其测力台
+    数据一并排除，不计入训练/评估。
     """
     pairs = []
+    skipped = []
     for z, initials in SUBJECT_MAP.items():
         if subjects is not None and z not in subjects:
             continue
@@ -222,9 +240,17 @@ def discover_trial_pairs(subjectdata_root, subjects=None):
             continue
         for sf in sorted(glob.glob(os.path.join(sensor_dir, f"{initials}*.csv"))):
             code = os.path.basename(sf)[len(initials):].replace(".csv", "")
+            if (z, code) in INVALID_TRIALS:
+                skipped.append((z, code))
+                continue
             qf = os.path.join(qual_dir, f"z{n}_{code}_mot_100Hz.csv")
             if os.path.isfile(qf):
                 pairs.append((sf, qf, z))
+    if skipped:
+        warnings.warn(
+            f"排除无效 trial（IMU 数据缺失，见 constants.INVALID_TRIALS）：{skipped}",
+            stacklevel=2,
+        )
     return pairs
 
 
@@ -240,11 +266,12 @@ class GRFSequenceDataset(Dataset):
         refine_radius=DEFAULT_REFINE_RADIUS,
         feature_scaler=None,
         target_scaler=None,
+        feature_mode="raw",
     ):
         self.window, self.step, self.refine_radius = window, step, refine_radius
         Xs, ys = [], []
         for sp, qp, z in trial_pairs:
-            f, t = load_aligned_trial(sp, qp, z, refine_radius)
+            f, t = load_aligned_trial(sp, qp, z, refine_radius, feature_mode)
             X, y = window_trial(f, t, window, step)
             if len(X):
                 Xs.append(X)

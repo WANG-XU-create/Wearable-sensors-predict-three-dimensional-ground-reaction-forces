@@ -40,11 +40,13 @@ def _shifted(sig, lag, fill):
     return out
 
 
-def _write_subject_fixture(root, z, initials, n_trials, rng):
+def _write_subject_fixture(root, z, initials, n_trials, rng, codes=None):
     """按 subjectdata 目录布局写一个受试者：左脚 vy = 左压力和 × 5（可学习映射）。
 
     左脚所踩板随受试者组变化（z1–z5 板1、z6–z8 板2），模拟真实采集协议，
     使跨组 LOSO 必须经受「板->脚」规范化路径。
+    codes 为 trial 序号列表（默认 01..n_trials）；z1 夹具需避开
+    constants.INVALID_TRIALS 中的真实无效序号（03/04），否则会被过滤。
     """
     n = int(z[1:])
     left_plate = LEFT_FOOT_PLATE[z]
@@ -54,7 +56,7 @@ def _write_subject_fixture(root, z, initials, n_trials, rng):
     os.makedirs(sensor_dir, exist_ok=True)
     os.makedirs(qual_dir, exist_ok=True)
     files = []
-    for t in range(1, n_trials + 1):
+    for t, code in enumerate(codes or [f"{i + 1:02d}" for i in range(n_trials)], start=1):
         frames = 150 + 10 * t
         base_l = _gait_like(frames, seed=1000 * n + t)
         base_r = _shifted(base_l, 30, fill=0.1)  # 右足迟 30 帧
@@ -75,7 +77,6 @@ def _write_subject_fixture(root, z, initials, n_trials, rng):
         qual[f"ground_force_{right_plate}_vy"] = 5.0 * base_r + 0.05 * rng.standard_normal(frames)
         # vx/vz 保留小随机幅（非常量、但不可预测）
 
-        code = f"{t:02d}"
         sp = os.path.join(sensor_dir, f"{initials}{code}.csv")
         qp = os.path.join(qual_dir, f"z{n}_{code}_mot_100Hz.csv")
         sensor.to_csv(sp, index=False)
@@ -110,7 +111,8 @@ class TestEarlyStopping(unittest.TestCase):
         # lr=0 -> 权重不变 -> 每轮验证损失逐位相同 -> 第 patience+1 轮触发早停
         with tempfile.TemporaryDirectory() as d:
             rng = np.random.default_rng(5)
-            _write_subject_fixture(d, "z1", "LQW", 4, rng)
+            _write_subject_fixture(d, "z1", "LQW", 4, rng,
+                                   codes=["01", "02", "05", "06"])  # 避开 INVALID_TRIALS
             pairs = discover_trial_pairs(d, subjects=["z1"])
             fit, val = split_val_trials(pairs, 0.25, np.random.default_rng(0))
             cfg = {
@@ -127,7 +129,8 @@ class TestEarlyStopping(unittest.TestCase):
         # patience=0 表示不早停：跑满全部轮数
         with tempfile.TemporaryDirectory() as d:
             rng = np.random.default_rng(5)
-            _write_subject_fixture(d, "z1", "LQW", 4, rng)
+            _write_subject_fixture(d, "z1", "LQW", 4, rng,
+                                   codes=["01", "02", "05", "06"])  # 避开 INVALID_TRIALS
             pairs = discover_trial_pairs(d, subjects=["z1"])
             fit, val = split_val_trials(pairs, 0.25, np.random.default_rng(0))
             cfg = {
@@ -148,7 +151,9 @@ class TestTrainerEndToEnd(unittest.TestCase):
         root = cls._tmp.name
         rng = np.random.default_rng(42)
         cls.fixture = {
-            "z1": _write_subject_fixture(root, "z1", "LQW", 4, rng),
+            # z1 序号避开 INVALID_TRIALS（03/04 为真实数据中的 IMU 全零文件）
+            "z1": _write_subject_fixture(root, "z1", "LQW", 4, rng,
+                                         codes=["01", "02", "05", "06"]),
             "z3": _write_subject_fixture(root, "z3", "HYJ", 4, rng),
             # z6 左脚踩板2：跨组 LOSO 回归测试（板->脚规范化）
             "z6": _write_subject_fixture(root, "z6", "XBL", 4, rng),

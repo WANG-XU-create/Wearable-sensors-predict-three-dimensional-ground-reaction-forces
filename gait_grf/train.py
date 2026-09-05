@@ -46,6 +46,7 @@ from .data import (
     load_aligned_trial,
     window_trial,
 )
+from .features import FEATURE_MODES
 from .metrics import fold_metrics as metrics_fold_metrics
 from .models import make_model
 
@@ -100,7 +101,8 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
     返回 (model, scalers, history)；history 末项含 best_epoch。
     """
     fit_ds = GRFSequenceDataset(
-        fit_pairs, window=cfg["window"], step=cfg["step"]
+        fit_pairs, window=cfg["window"], step=cfg["step"],
+        feature_mode=cfg.get("feature_mode", "raw"),
     )
     scalers = (fit_ds.feature_scaler, fit_ds.target_scaler)
     X = torch.from_numpy(fit_ds.X)
@@ -114,6 +116,7 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
             step=cfg["step"],
             feature_scaler=scalers[0],
             target_scaler=scalers[1],
+            feature_mode=cfg.get("feature_mode", "raw"),
         )
 
     model = make_model(
@@ -178,7 +181,8 @@ def predict_trial(model, scalers, sensor_path, qualisys_path, subject, cfg, devi
     """
     feature_scaler, target_scaler = scalers
     feats, targets = load_aligned_trial(
-        sensor_path, qualisys_path, subject, cfg["refine_radius"]
+        sensor_path, qualisys_path, subject, cfg["refine_radius"],
+        cfg.get("feature_mode", "raw"),
     )
     Xw, _ = window_trial(feats, targets, cfg["window"], cfg["step"])
     if len(Xw) == 0:
@@ -347,6 +351,13 @@ def main(argv=None):
         choices=["ltc", "lstm", "tcn"],
         help="模型选择：LTC 主模型 / LSTM、TCN 基线（ticket #5）",
     )
+    parser.add_argument(
+        "--features",
+        default="raw",
+        choices=list(FEATURE_MODES),
+        help="输入特征：raw=原始 120 维（基线）；kinematic / kinematic_min=运动学"
+        "特征前端（基线相对运动 + 压力摘要，ticket #7）",
+    )
     parser.add_argument("--hidden", type=int, default=32, help="LTC 隐层大小")
     parser.add_argument("--layers", type=int, default=1, help="LTC 层数")
     parser.add_argument("--dropout", type=float, default=0.0, help="dropout 概率")
@@ -388,6 +399,7 @@ def main(argv=None):
     set_seed(args.seed)
     cfg = {
         "model": args.model,
+        "feature_mode": args.features,
         "hidden": args.hidden,
         "layers": args.layers,
         "dropout": args.dropout,

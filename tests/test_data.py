@@ -281,12 +281,18 @@ class TestDiscover(unittest.TestCase):
             self.assertTrue(os.path.isfile(qp))
             self.assertEqual(z, "z1")
 
-    def test_discovers_all_226_pairs(self):
+    def test_discovers_all_224_pairs(self):
+        """226 个文件对中，LQW03/04（z1）IMU 数据全零（INVALID_TRIALS），
+        连同其测力台数据一并排除，有效 trial 对 = 224。"""
         root = "/root/autodl-tmp/data/subjectdata"
         if not os.path.isdir(root):
             self.skipTest("subjectdata 不存在")
         pairs = discover_trial_pairs(root)
-        self.assertEqual(len(pairs), 226)
+        self.assertEqual(len(pairs), 224)
+        # 被排除的文件不得出现在结果里
+        codes = {os.path.basename(sp) for sp, _, _ in pairs}
+        self.assertNotIn("LQW03.csv", codes)
+        self.assertNotIn("LQW04.csv", codes)
 
 
 class TestRealDataSmoke(unittest.TestCase):
