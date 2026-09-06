@@ -203,3 +203,66 @@ def test_feature_dim_matches_modes():
 def test_feature_dim_rejects_unknown_mode():
     with pytest.raises(ValueError, match="未知特征模式"):
         feature_dim("nope")
+
+
+# ---------------- A4 左右镜像增广：mirror_feature_perm ----------------
+
+
+def test_mirror_perm_involution_all_modes():
+    # 置换必须是对合双射：应用两次回到原列序（mirror(mirror(x)) == x）
+    from gait_grf.features import FEATURE_MODES, mirror_feature_perm
+
+    for mode in ("raw",) + tuple(FEATURE_MODES):
+        p = mirror_feature_perm(mode)
+        names = list(FEATURE_COLS) if mode == "raw" else kinematic_feature_names(mode)
+        assert len(p) == len(names)
+        assert sorted(int(i) for i in p) == list(range(len(names)))
+        assert all(p[p[i]] == i for i in range(len(names)))
+
+
+def test_mirror_perm_block_mapping_kinematic_dyn():
+    from gait_grf.features import mirror_feature_perm
+
+    names = kinematic_feature_names("kinematic_dyn")
+    idx = {n: i for i, n in enumerate(names)}
+    p = mirror_feature_perm("kinematic_dyn")
+    pairs = [
+        # selfrel / 各阶差分 / 关节 / 压力摘要 / 压力变化率逐块互换
+        ("right_thigh_selfrel_rx", "left_thigh_selfrel_rx"),
+        ("right_thigh_selfrel_rz_d1", "left_thigh_selfrel_rz_d1"),
+        ("right_foot_selfrel_ry_d2", "left_foot_selfrel_ry_d2"),
+        ("right_hip_rel_ry", "left_hip_rel_ry"),
+        ("right_knee_rel_rx_d1", "left_knee_rel_rx_d1"),
+        ("right_sum", "left_sum"),
+        ("right_max_d1", "left_max_d1"),
+    ]
+    for a, b in pairs:
+        assert p[idx[a]] == idx[b] and p[idx[b]] == idx[a], (a, b)
+
+
+def test_mirror_perm_trunk_untouched():
+    from gait_grf.features import mirror_feature_perm
+
+    for mode in ("raw", "kinematic", "kinematic_dyn"):
+        names = list(FEATURE_COLS) if mode == "raw" else kinematic_feature_names(mode)
+        p = mirror_feature_perm(mode)
+        for i, n in enumerate(names):
+            if n.startswith("trunk_"):
+                assert p[i] == i, (mode, n)
+
+
+def test_mirror_perm_commutes_with_column_diff():
+    # d(xP)/dt == (dx/dt)·P：换列与逐列时间差分可交换，动力学块无需特殊处理
+    from gait_grf.features import _diff, mirror_feature_perm
+
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((50, 123))
+    p = mirror_feature_perm("kinematic_dyn")
+    np.testing.assert_allclose(_diff(x[:, p]), _diff(x)[:, p], rtol=1e-12)
+
+
+def test_mirror_perm_unknown_mode_raises():
+    from gait_grf.features import mirror_feature_perm
+
+    with pytest.raises(ValueError, match="未知特征模式"):
+        mirror_feature_perm("nope")

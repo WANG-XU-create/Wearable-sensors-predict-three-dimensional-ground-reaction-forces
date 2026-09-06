@@ -11,15 +11,22 @@
 
 用法：
     python -m gait_grf.evaluate --run-dir runs/ltc_full_loso8 \
-        --data-root data/subjectdata [--stitch uniform|hann|center]
+        --data-root data/subjectdata [--stitch uniform|hann|center] \
+        [--scaler-refit none|test]
 
 --stitch 是纯评估期的重叠窗拼接方式（默认 uniform = 训练时口径），
 用于免重训对比拼接对峰值误差的影响（见 train.stitch_windows）。
 
-输出（写入 run-dir；stitch != uniform 时文件名带后缀）：
-    metrics_full[_<stitch>].csv             每折一行的全量指标（列 =
-                                            metrics.csv 扩充 %BW/辅助指标）
-    metrics_full[_<stitch>]_aggregate.json  跨折 mean/std 汇总
+--scaler-refit test 为 A5 测试受试者 transductive 自校准（无标签，部署合法）：
+feature scaler 用留出受试者本人的全部对齐帧重新 fit（mean+std 全换），
+target scaler 与模型权重不动——度量域偏移中「特征分布线性漂移」的可补偿部分。
+已知代价：压力幅值类特征的绝对水平信息（如体重差异）会被一并归一化掉，
+逐轴结果需对比原口径解读。
+
+输出（写入 run-dir；stitch != uniform / refit != none 时文件名带后缀）：
+    metrics_full[_<stitch>][_refit].csv             每折一行的全量指标（列 =
+                                                    metrics.csv 扩充 %BW/辅助指标）
+    metrics_full[_<stitch>][_refit]_aggregate.json  跨折 mean/std 汇总
 也支持部分完成的运行（逐 checkpoint 处理，缺的折跳过）。
 """
 
@@ -29,22 +36,27 @@ import json
 import os
 import re
 
+import numpy as np
 import pandas as pd
 import torch
+from sklearn.preprocessing import StandardScaler
 
 from .constants import SUBJECT_WEIGHT_N
-from .data import discover_trial_pairs
+from .data import discover_trial_pairs, load_aligned_trial
 from .features import feature_dim
 from .metrics import fold_metrics
 from .models import make_model
 from .train import STITCH_MODES, predict_trial
 
 
-def evaluate_run(run_dir, data_root, device, stitch="uniform"):
+def evaluate_run(run_dir, data_root, device, stitch="uniform", scaler_refit="none"):
     """评估 run 目录下全部 checkpoint，返回逐折指标 dict 列表。
 
     stitch 为重叠窗拼接方式（train.STITCH_MODES），作为评估期参数
     覆盖进各 checkpoint 的 cfg，不影响训练产物。
+    scaler_refit="test" 时（A5），每折的 feature scaler 在留出受试者
+    本人的全部对齐帧上重新 fit（load_aligned_trial 有进程内缓存，
+    后续 predict_trial 不重复计算）。
     """
     ckpts = sorted(glob.glob(os.path.join(run_dir, "model_fold*.pt")))
     if not ckpts:
@@ -62,15 +74,27 @@ def evaluate_run(run_dir, data_root, device, stitch="uniform"):
             layers=cfg["layers"],
             dropout=cfg["dropout"],
             kernel=cfg.get("kernel", 5),
+            ode_unfolds=cfg.get("ode_unfolds", 6),
+            attn_heads=cfg.get("attn_heads", 8),
         ).to(device)
         model.load_state_dict(blob["model"])
         model.eval()
-        scalers = (blob["feature_scaler"], blob["target_scaler"])
+        feature_scaler, target_scaler = blob["feature_scaler"], blob["target_scaler"]
 
         trials = discover_trial_pairs(data_root, subjects=[test_z])
         if not trials:
             print(f"跳过 {os.path.basename(ck)}：{data_root} 下没有 {test_z} 的 trial")
             continue
+        if scaler_refit == "test":
+            feats = [
+                load_aligned_trial(
+                    sp, qp, z, cfg["refine_radius"], cfg.get("feature_mode", "raw")
+                )[0]
+                for sp, qp, z in trials
+            ]
+            feature_scaler = StandardScaler().fit(np.concatenate(feats, axis=0))
+        scalers = (feature_scaler, target_scaler)
+
         preds, trues, n_windows = [], [], 0
         for sp, qp, z in trials:
             result = predict_trial(model, scalers, sp, qp, z, cfg, device)
@@ -91,8 +115,11 @@ def evaluate_run(run_dir, data_root, device, stitch="uniform"):
                 **fold_metrics(preds, trues, SUBJECT_WEIGHT_N[test_z]),
             }
         )
-        print(f"[{os.path.basename(ck)}] test={test_z}: {len(preds)} trials 已评估",
-              flush=True)
+        print(
+            f"[{os.path.basename(ck)}] test={test_z}: {len(preds)} trials 已评估"
+            + ("（feature scaler 已按受试者 refit）" if scaler_refit == "test" else ""),
+            flush=True,
+        )
     return rows
 
 
@@ -111,10 +138,18 @@ def main(argv=None):
              "加权；center=每帧取中心最近窗（拼接削峰对比实验）",
     )
     parser.add_argument(
+        "--scaler-refit",
+        default="none",
+        choices=["none", "test"],
+        help="A5 transductive 自校准：test=feature scaler 按留出受试者本人"
+             "数据 refit（无标签，target scaler 不动）；none=训练时 scaler"
+             "（默认，原口径）",
+    )
+    parser.add_argument(
         "--out",
         default=None,
         help="输出文件名（写入 run-dir）；默认 metrics_full.csv（stitch != "
-             "uniform 时为 metrics_full_<stitch>.csv）",
+             "uniform / refit != none 时带后缀）",
     )
     parser.add_argument(
         "--device",
@@ -128,12 +163,17 @@ def main(argv=None):
     else:
         device = torch.device(args.device)
 
-    rows = evaluate_run(args.run_dir, args.data_root, device, stitch=args.stitch)
-    df = pd.DataFrame(rows).sort_values("fold").reset_index(drop=True)
-    out_name = args.out or (
-        "metrics_full.csv" if args.stitch == "uniform"
-        else f"metrics_full_{args.stitch}.csv"
+    rows = evaluate_run(
+        args.run_dir, args.data_root, device,
+        stitch=args.stitch, scaler_refit=args.scaler_refit,
     )
+    df = pd.DataFrame(rows).sort_values("fold").reset_index(drop=True)
+    suffix = ""
+    if args.stitch != "uniform":
+        suffix += f"_{args.stitch}"
+    if args.scaler_refit != "none":
+        suffix += f"_refit-{args.scaler_refit}"
+    out_name = args.out or f"metrics_full{suffix}.csv"
     out_path = os.path.join(args.run_dir, out_name)
     df.to_csv(out_path, index=False)
 
@@ -145,9 +185,11 @@ def main(argv=None):
     agg_path = out_path.replace(".csv", "_aggregate.json")
     with open(agg_path, "w", encoding="utf-8") as f:
         json.dump({"n_folds_evaluated": len(df), "stitch": args.stitch,
+                   "scaler_refit": args.scaler_refit,
                    "aggregate": agg}, f, ensure_ascii=False, indent=2)
 
-    print(f"\n指标已写入 {out_path}（汇总 {agg_path}，stitch={args.stitch}）")
+    print(f"\n指标已写入 {out_path}（汇总 {agg_path}，stitch={args.stitch}，"
+          f"scaler_refit={args.scaler_refit}）")
     show = ["fold", "test_subject",
             "rmse_pctbw_ground_force_left_vy", "rmse_pctbw_ground_force_right_vy",
             "peak_err_pctbw_ground_force_left_vy", "peak_err_pctbw_ground_force_right_vy",

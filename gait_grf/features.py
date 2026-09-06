@@ -129,6 +129,36 @@ def feature_dim(mode="raw"):
     raise ValueError(f"未知特征模式 {mode!r}，可选：{FEATURE_MODES}")
 
 
+def mirror_feature_perm(feature_mode="kinematic_dyn"):
+    """A4 左右镜像增广的特征列置换（对合置换）：right_↔left_ 整块互换，trunk_ 原位。
+
+    口径为朴素块交换（v2 分析 §4-A4）：步态以矢状面摆动为主，绕内外侧轴的
+    pitch 分量在镜像下不变，故块交换 ≈ 真 sagittal 镜像的主导分量；roll/yaw
+    分量的符号校正需要 per-sensor mounting 姿态（上电参考系无重力对齐，不可
+    得，属 B7 mounting 规整范畴），不做。已知风险：若某侧信号本身弱（右足 vx），
+    镜像会把弱侧复制到对侧。列置换与逐列时间差分可交换（d(xP)/dt = (dx/dt)·P），
+    对 *_d1/_d2 动力学块同样成立，故差分块无需特殊处理。
+    """
+    names = (
+        list(FEATURE_COLS) if feature_mode == "raw"
+        else kinematic_feature_names(feature_mode)
+    )
+    idx = {n: i for i, n in enumerate(names)}
+    perm = np.empty(len(names), dtype=int)
+    for i, n in enumerate(names):
+        if n.startswith("right_"):
+            perm[i] = idx["left_" + n[len("right_"):]]
+        elif n.startswith("left_"):
+            perm[i] = idx["right_" + n[len("left_"):]]
+        else:  # trunk_*（无对侧）等原位
+            perm[i] = i
+    if sorted(perm.tolist()) != list(range(len(names))) or not all(
+        perm[perm[i]] == i for i in range(len(names))
+    ):
+        raise AssertionError(f"{feature_mode} 的镜像置换不是对合双射")
+    return perm
+
+
 def load_quat_wxyz(sensor_df, sensor):
     """读取单传感器四元数为内部 (w,x,y,z) (N,4)；全零帧填单位四元数。
 

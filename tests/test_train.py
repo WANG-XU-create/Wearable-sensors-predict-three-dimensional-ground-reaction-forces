@@ -397,3 +397,193 @@ class TestEvaluateKinematicCheckpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWeightedMse(unittest.TestCase):
+    """B6 幅值加权损失：w = 1 + λ·|y|/mean|y|（z 空间，权重取自目标）。"""
+
+    def test_zero_lambda_equals_mse(self):
+        from gait_grf.train import weighted_mse
+
+        torch.manual_seed(0)
+        pred, y = torch.randn(8, 5, 6), torch.randn(8, 5, 6)
+        y_scale = float(y.abs().mean())
+        self.assertAlmostEqual(
+            weighted_mse(pred, y, 0.0, y_scale).item(),
+            torch.nn.functional.mse_loss(pred, y).item(),
+            places=6,
+        )
+
+    def test_matches_formula_and_upweights_high_amplitude(self):
+        from gait_grf.train import weighted_mse
+
+        # 常量零预测 vs 两段幅值的目标：λ>0 时损失必须高于纯 MSE（高幅值帧加权）
+        y = torch.tensor([[[0.0]] * 4 + [[3.0]] * 4])  # (1,8,1) mean|y| = 1.5
+        pred = torch.zeros_like(y)
+        y_scale = float(y.abs().mean())
+        mse = ((pred - y) ** 2).mean()
+        lam = 1.0
+        got = weighted_mse(pred, y, lam, y_scale).item()
+        expected = float(
+            np.mean((1.0 + lam * np.abs(y.numpy()) / y_scale) * y.numpy() ** 2)
+        )
+        self.assertAlmostEqual(got, expected, places=5)
+        self.assertAlmostEqual(weighted_mse(pred, y, 0.0, y_scale).item(), mse.item(), places=6)
+        self.assertGreater(got, mse.item())
+
+    def test_target_has_no_grad(self):
+        # 权重取自目标侧，不得向目标反传（pred 才是梯度来源）
+        from gait_grf.train import weighted_mse
+
+        pred = torch.zeros(1, 4, 1, requires_grad=True)
+        y = torch.tensor([[[1.0], [2.0], [3.0], [4.0]]])
+        loss = weighted_mse(pred, y, 1.0, float(y.abs().mean()))
+        loss.backward()
+        self.assertTrue(pred.grad is not None and torch.isfinite(pred.grad).all())
+
+
+class TestImprovementsEndToEnd(unittest.TestCase):
+    """B6 --peak-weight + A4 --mirror-aug 的入口命令烟测（小 fixture，LSTM 提速）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls._tmp.name
+        rng = np.random.default_rng(7)
+        _write_subject_fixture(root, "z1", "LQW", 4, rng,
+                               codes=["01", "02", "05", "06"])
+        _write_subject_fixture(root, "z3", "HYJ", 4, rng)
+        cls.data_root = root
+        cls.out_dir = os.path.join(root, "out")
+        cls.proc = subprocess.run(
+            [
+                sys.executable, "-m", "gait_grf.train",
+                "--data-root", root,
+                "--out-dir", cls.out_dir,
+                "--subjects", "z1", "z3",
+                "--model", "lstm",
+                "--features", "kinematic_min",
+                "--hidden", "8",
+                "--epochs", "3",
+                "--patience", "2",
+                "--batch-size", "8",
+                "--device", "cpu",
+                "--peak-weight", "1.0",
+                "--mirror-aug",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_exit_zero(self):
+        self.assertEqual(
+            self.proc.returncode, 0,
+            f"stderr:\n{self.proc.stderr[-3000:]}\nstdout:\n{self.proc.stdout[-2000:]}",
+        )
+
+    def test_config_and_weighted_val_recorded(self):
+        with open(os.path.join(self.out_dir, "summary.json"), encoding="utf-8") as f:
+            summary = json.load(f)
+        self.assertEqual(summary["config"]["peak_weight"], 1.0)
+        self.assertIs(summary["config"]["mirror_aug"], True)
+        self.assertEqual(summary["config"]["feature_mode"], "kinematic_min")
+        for fold in summary["folds"]:
+            for h in fold["history"]:
+                # λ>0 时早停判据为加权损失，同时记录 plain val_mse 供跨实验可比
+                self.assertIn("val_loss", h)
+                self.assertIn("val_mse", h)
+                self.assertGreaterEqual(h["val_loss"], h["val_mse"])
+
+    def test_checkpoint_config_persisted(self):
+        blob = torch.load(
+            os.path.join(self.out_dir, "model_fold1_z1.pt"),
+            map_location="cpu", weights_only=False,
+        )
+        self.assertEqual(blob["config"]["peak_weight"], 1.0)
+        self.assertIs(blob["config"]["mirror_aug"], True)
+
+    def test_metrics_finite(self):
+        df = pd.read_csv(os.path.join(self.out_dir, "metrics.csv"))
+        values = df[list(METRIC_COLS)].to_numpy(dtype=float)
+        self.assertTrue(np.isfinite(values).all())
+
+
+class TestScalerRefitEvaluate(unittest.TestCase):
+    """A5 transductive scaler refit：evaluate 侧免重训自校准路径。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls._tmp.name
+        rng = np.random.default_rng(8)
+        _write_subject_fixture(root, "z1", "LQW", 3, rng,
+                               codes=["01", "02", "05"])
+        _write_subject_fixture(root, "z3", "HYJ", 3, rng)
+        cls.data_root = root
+        cls.out_dir = os.path.join(root, "out")
+        cls.proc = subprocess.run(
+            [
+                sys.executable, "-m", "gait_grf.train",
+                "--data-root", root,
+                "--out-dir", cls.out_dir,
+                "--subjects", "z1", "z3",
+                "--hidden", "8",
+                "--epochs", "2",
+                "--patience", "0",
+                "--batch-size", "8",
+                "--device", "cpu",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_refit_rows_finite_and_complete(self):
+        self.assertEqual(self.proc.returncode, 0, self.proc.stderr[-2000:])
+        from gait_grf.evaluate import evaluate_run
+
+        rows = evaluate_run(
+            self.out_dir, self.data_root, torch.device("cpu"),
+            scaler_refit="test",
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r["test_subject"] for r in rows}, {"z1", "z3"})
+        for row in rows:
+            self.assertGreater(row["n_test_trials"], 0)
+            for k, v in row.items():
+                if k != "test_subject":
+                    self.assertTrue(np.isfinite(v), f"{k} 非有限")
+
+    def test_refit_cli_output_suffix(self):
+        from gait_grf.evaluate import main as evaluate_main
+
+        # 默认口径写 metrics_full.csv（复算烟测），refit 写 _refit-test 后缀文件
+        evaluate_main([
+            "--run-dir", self.out_dir, "--data-root", self.data_root,
+            "--device", "cpu",
+        ])
+        evaluate_main([
+            "--run-dir", self.out_dir, "--data-root", self.data_root,
+            "--device", "cpu", "--scaler-refit", "test",
+        ])
+        for name in ("metrics_full.csv", "metrics_full_refit-test.csv",
+                     "metrics_full_aggregate.json",
+                     "metrics_full_refit-test_aggregate.json"):
+            path = os.path.join(self.out_dir, name)
+            self.assertTrue(os.path.isfile(path), f"缺少输出文件 {name}")
+        import json as _json
+        with open(os.path.join(self.out_dir, "metrics_full_refit-test_aggregate.json"),
+                  encoding="utf-8") as f:
+            agg = _json.load(f)
+        self.assertEqual(agg["scaler_refit"], "test")

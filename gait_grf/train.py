@@ -8,6 +8,7 @@
     python -m gait_grf.train --data-root data/subjectdata --out-dir runs/ltc_full \
         --hidden 128 --layers 2 --dropout 0.3 --epochs 100
     基线：--model lstm / --model tcn（其余参数同构，公平对比）
+    改进项：--peak-weight λ（B6 峰值/幅值加权损失）、--mirror-aug（A4 左右镜像增广）
 
 输出（写入 out-dir）：
     metrics.csv              每折一行：6 个 GRF 输出列的 RMSE(N) + 合成幅值
@@ -94,6 +95,17 @@ def _batched_forward(model, X, device, batch_size):
     return np.concatenate(outs)
 
 
+def weighted_mse(pred, target, lam, y_scale):
+    """B6 峰值加权损失：按目标幅值抬高高受力帧的梯度。
+
+    w = 1 + λ·|y|/mean|y|（z 空间逐元素，权重取自目标、detach）。
+    峰值帧（|y| ≈ 2–3 z）权重约为低受力帧的 3–4 倍，抵消 MSE 对
+    高幅值段的回归均值化（峰值误差归因见 experiment-log 拼接实验条目）。
+    """
+    w = 1.0 + lam * target.detach().abs() / y_scale
+    return (w * (pred - target) ** 2).mean()
+
+
 def train_one_fold(fit_pairs, val_pairs, cfg, device):
     """训练一折：fit trial 上拟合 scaler 并训练，val trial 上监控损失。
 
@@ -103,6 +115,7 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
     fit_ds = GRFSequenceDataset(
         fit_pairs, window=cfg["window"], step=cfg["step"],
         feature_mode=cfg.get("feature_mode", "raw"),
+        mirror_aug=bool(cfg.get("mirror_aug", False)),
     )
     scalers = (fit_ds.feature_scaler, fit_ds.target_scaler)
     X = torch.from_numpy(fit_ds.X)
@@ -130,9 +143,21 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
         layers=cfg["layers"],
         dropout=cfg["dropout"],
         kernel=cfg.get("kernel", 5),
+        ode_unfolds=cfg.get("ode_unfolds", 6),
+        attn_heads=cfg.get("attn_heads", 8),
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
-    loss_fn = torch.nn.MSELoss()
+    # B6：λ>0 时用幅值加权 MSE（训练与早停判据同一目标），λ=0 保持纯 MSE
+    lam = float(cfg.get("peak_weight", 0.0))
+    y_scale = None
+    if lam > 0:
+        y_scale = float(np.abs(fit_ds.y).mean()) + 1e-8
+
+        def loss_fn(pred, target):
+            return weighted_mse(pred, target, lam, y_scale)
+
+    else:
+        loss_fn = torch.nn.MSELoss()
 
     history = []
     best_val = float("inf")
@@ -156,9 +181,16 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
             val_pred = _batched_forward(
                 model, val_ds.X, device, cfg["batch_size"]
             )
-            entry["val_loss"] = float(
-                np.mean((val_pred - val_ds.y) ** 2)
-            )
+            if lam > 0:
+                resid = val_pred - val_ds.y
+                entry["val_mse"] = float(np.mean(resid ** 2))
+                entry["val_loss"] = float(
+                    np.mean((1.0 + lam * np.abs(val_ds.y) / y_scale) * resid ** 2)
+                )
+            else:
+                entry["val_loss"] = float(
+                    np.mean((val_pred - val_ds.y) ** 2)
+                )
             if entry["val_loss"] < best_val:
                 best_val = entry["val_loss"]
                 best_epoch = epoch
@@ -398,8 +430,9 @@ def main(argv=None):
     parser.add_argument(
         "--model",
         default="ltc",
-        choices=["ltc", "lstm", "tcn"],
-        help="模型选择：LTC 主模型 / LSTM、TCN 基线（ticket #5）",
+        choices=["ltc", "ltc_attn", "cfc", "lstm", "tcn"],
+        help="模型选择：LTC 主模型 / LTC+卷积前端+双向注意力混合（issue #0011）/"
+             "LSTM、TCN 基线（ticket #5）/ CfC 闭式提速变体（C12，v2 §3.3）",
     )
     parser.add_argument(
         "--features",
@@ -417,6 +450,19 @@ def main(argv=None):
         default=5,
         help="TCN 卷积核宽（仅 --model tcn 使用）",
     )
+    parser.add_argument(
+        "--ode-unfolds",
+        type=int,
+        default=6,
+        help="LTC 半隐式 ODE 解算器内层展开数（库默认 6；C12 提速可降为 "
+             "2–3，精度需 sweep 验证；仅 --model ltc/ltc_attn 使用，checkpoint 兼容）",
+    )
+    parser.add_argument(
+        "--attn-heads",
+        type=int,
+        default=8,
+        help="ltc_attn 混合架构的自注意力头数（仅 --model ltc_attn 使用）",
+    )
     parser.add_argument("--epochs", type=int, default=5, help="最大训练轮数")
     parser.add_argument(
         "--patience",
@@ -432,6 +478,19 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument(
         "--refine-radius", type=int, default=DEFAULT_REFINE_RADIUS, help="对齐精修半径"
+    )
+    parser.add_argument(
+        "--peak-weight",
+        type=float,
+        default=0.0,
+        help="B6 幅值加权损失强度 λ（0=纯 MSE）：w = 1 + λ·|y|/mean|y|，"
+             "训练与早停判据均用加权损失",
+    )
+    parser.add_argument(
+        "--mirror-aug",
+        action="store_true",
+        help="A4 左右镜像增广：fit trial 的特征/目标左右整块互换复制一份"
+             "（训练窗翻倍）；val 不增广。注意：右足弱信号会同步复制到左足",
     )
     parser.add_argument(
         "--device",
@@ -454,6 +513,8 @@ def main(argv=None):
         "layers": args.layers,
         "dropout": args.dropout,
         "kernel": args.kernel,
+        "ode_unfolds": args.ode_unfolds,
+        "attn_heads": args.attn_heads,
         "epochs": args.epochs,
         "patience": args.patience,
         "batch_size": args.batch_size,
@@ -462,6 +523,8 @@ def main(argv=None):
         "step": args.step,
         "val_frac": args.val_frac,
         "refine_radius": args.refine_radius,
+        "peak_weight": args.peak_weight,
+        "mirror_aug": args.mirror_aug,
         "seed": args.seed,
         "rng": np.random.default_rng(args.seed),
     }

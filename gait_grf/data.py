@@ -19,7 +19,12 @@ from .constants import (
     LEFT_FOOT_PLATE,
     SUBJECT_MAP,
 )
-from .features import FEATURE_MODES, derive_kinematic_features, kinematic_feature_names
+from .features import (
+    FEATURE_MODES,
+    derive_kinematic_features,
+    kinematic_feature_names,
+    mirror_feature_perm,
+)
 
 
 def read_sensor(path):
@@ -254,6 +259,11 @@ def discover_trial_pairs(subjectdata_root, subjects=None):
     return pairs
 
 
+# A4 镜像增广的目标列置换：目标列序固定为前 3 列左足 vx/vy/vz、后 3 列右足
+# （extract_targets 已按脚语义规范化，与受试者板号无关），块交换即前后半互换。
+TARGET_MIRROR_PERM = [3, 4, 5, 0, 1, 2]
+
+
 class GRFSequenceDataset(Dataset):
     """给定 (sensor_path, qualisys_path, subject) trial 三元组列表，产出对齐、
     滑窗、目标脚语义规范化、归一化的序列。"""
@@ -267,15 +277,25 @@ class GRFSequenceDataset(Dataset):
         feature_scaler=None,
         target_scaler=None,
         feature_mode="raw",
+        mirror_aug=False,
     ):
         self.window, self.step, self.refine_radius = window, step, refine_radius
+        # A4 左右镜像增广：right_↔left_ 特征块互换 + 目标前后半（左/右足）互换，
+        # 每 trial 复制一份（训练窗翻倍）。列置换与逐列差分可交换（见
+        # features.mirror_feature_perm），目标纯块交换不做符号翻转——与特征侧
+        # 同一约定。调用方约定：只对 fit 数据开启，val 永不增广。
+        feat_perm = mirror_feature_perm(feature_mode) if mirror_aug else None
         Xs, ys = [], []
         for sp, qp, z in trial_pairs:
             f, t = load_aligned_trial(sp, qp, z, refine_radius, feature_mode)
-            X, y = window_trial(f, t, window, step)
-            if len(X):
-                Xs.append(X)
-                ys.append(y)
+            variants = [(f, t)]
+            if mirror_aug:
+                variants.append((f[:, feat_perm], t[:, TARGET_MIRROR_PERM]))
+            for fv, tv in variants:
+                X, y = window_trial(fv, tv, window, step)
+                if len(X):
+                    Xs.append(X)
+                    ys.append(y)
 
         if not Xs:
             raise ValueError(

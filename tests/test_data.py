@@ -268,6 +268,57 @@ class TestDataset(unittest.TestCase):
             )
             self.assertTrue(np.isfinite(val[0][0].numpy()).all())
 
+    def test_mirror_aug_doubles_windows_and_swaps_blocks(self):
+        """A4 镜像增广：训练窗翻倍；镜像窗反变换回原始单位后 = 原窗的
+        特征列 right↔left 置换 + 目标前后半（左/右足）互换（逐元素相等）。"""
+        from gait_grf.data import TARGET_MIRROR_PERM
+        from gait_grf.features import mirror_feature_perm
+
+        rng = np.random.default_rng(12)
+        with tempfile.TemporaryDirectory() as d:
+            t1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
+            base = GRFSequenceDataset([t1], window=100, step=10)
+            aug = GRFSequenceDataset(
+                [t1],
+                window=100,
+                step=10,
+                feature_scaler=base.feature_scaler,  # 共享 scaler，反变换同口径
+                target_scaler=base.target_scaler,
+                mirror_aug=True,
+            )
+            n = len(base)
+            self.assertEqual(len(aug), 2 * n)
+
+            def raw_X(a, i):
+                return a.feature_scaler.inverse_transform(
+                    a.X[i].reshape(-1, a.X.shape[-1])
+                ).reshape(a.X[i].shape)
+
+            def raw_y(a, i):
+                return a.target_scaler.inverse_transform(
+                    a.y[i].reshape(-1, a.y.shape[-1])
+                ).reshape(a.y[i].shape)
+
+            perm = mirror_feature_perm("raw")
+            for i in (0, n - 1):
+                # 前 n 个窗为原样
+                np.testing.assert_allclose(raw_X(aug, i), raw_X(base, i), atol=1e-6)
+                np.testing.assert_allclose(raw_y(aug, i), raw_y(base, i), atol=1e-6)
+                # 后 n 个窗为镜像副本：特征 right↔left 换列 + 目标左右足互换
+                np.testing.assert_allclose(
+                    raw_X(aug, n + i), raw_X(base, i)[:, perm], atol=1e-5
+                )
+                np.testing.assert_allclose(
+                    raw_y(aug, n + i), raw_y(base, i)[:, TARGET_MIRROR_PERM], atol=1e-5
+                )
+
+    def test_mirror_aug_default_off(self):
+        rng = np.random.default_rng(13)
+        with tempfile.TemporaryDirectory() as d:
+            t1 = self._write_trial(d, "a", 150, sentinel=1.0, rng=rng)
+            ds = GRFSequenceDataset([t1], window=100, step=10)
+            self.assertEqual(len(ds), (150 - 100) // 10 + 1)
+
 
 class TestDiscover(unittest.TestCase):
     def test_discovers_pairs_from_real_data_if_present(self):
