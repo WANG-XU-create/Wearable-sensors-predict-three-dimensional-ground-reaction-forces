@@ -952,3 +952,34 @@ class TestBuildOptimizer(unittest.TestCase):
         changed = any(not torch.equal(before_lin[n], p.detach())
                       for n, p in m.named_parameters() if n.endswith("readout.weight"))
         self.assertTrue(changed)
+
+
+class TestPressBranchCLI(unittest.TestCase):
+    """issue #0015 e2e：--press-branch + kinematic_dyn_p90 的入口命令与 checkpoint 往返。"""
+
+    def test_e2e_cli_and_evaluate_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            rng = np.random.default_rng(31)
+            _write_subject_fixture(d, "z1", "LQW", 3, rng,
+                                   codes=["01", "02", "05"])
+            _write_subject_fixture(d, "z3", "HYJ", 3, rng)
+            out_dir = os.path.join(d, "out")
+            proc = subprocess.run(
+                [sys.executable, "-m", "gait_grf.train",
+                 "--data-root", d, "--out-dir", out_dir,
+                 "--subjects", "z1", "z3",
+                 "--model", "ltc_attn", "--press-branch",
+                 "--features", "kinematic_dyn_p90",
+                 "--hidden", "8", "--epochs", "2", "--patience", "0",
+                 "--batch-size", "8", "--device", "cpu", "--ode-unfolds", "2"],
+                cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+            blob = torch.load(os.path.join(out_dir, "model_fold1_z1.pt"),
+                              map_location="cpu", weights_only=False)
+            self.assertIs(blob["config"]["press_branch"], True)
+            self.assertEqual(blob["config"]["feature_mode"], "kinematic_dyn_p90")
+            from gait_grf.evaluate import evaluate_run
+
+            rows, _ = evaluate_run(out_dir, d, torch.device("cpu"))
+            self.assertEqual(len(rows), 2)

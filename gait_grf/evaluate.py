@@ -71,7 +71,7 @@ from .train import STITCH_MODES, predict_trial
 _ENSEMBLE_CFG_KEYS = (
     "feature_mode", "window", "step", "refine_radius",
     "model", "hidden", "layers", "input_size", "plate_zero",
-    "cell", "ncp_units", "ncp_sparsity", "ncp_seed",
+    "cell", "ncp_units", "ncp_sparsity", "ncp_seed", "press_branch",
 )
 
 
@@ -92,6 +92,7 @@ def _build_model(blob, device):
         ode_unfolds=cfg.get("ode_unfolds", 6),
         attn_heads=cfg.get("attn_heads", 8),
         cell=cfg.get("cell", "ltc"),
+        press_branch=bool(cfg.get("press_branch", False)),
         ncp_units=cfg.get("ncp_units"),
         ncp_sparsity=cfg.get("ncp_sparsity", 0.5),
         ncp_seed=cfg.get("ncp_seed", 22222),
@@ -178,9 +179,10 @@ def evaluate_run(
                 )
             model_m, cfg_m = _build_model(blob_m, device)
             for k in _ENSEMBLE_CFG_KEYS:
-                if k in ("plate_zero", "cell"):
-                    v_m = cfg_m.get(k, False if k == "plate_zero" else "ltc")
-                    v_0 = cfg.get(k, False if k == "plate_zero" else "ltc")
+                if k in ("plate_zero", "cell", "press_branch"):
+                    default = {"plate_zero": False, "cell": "ltc", "press_branch": False}[k]
+                    v_m = cfg_m.get(k, default)
+                    v_0 = cfg.get(k, default)
                 elif k in ("ncp_units",):
                     v_m, v_0 = cfg_m.get(k), cfg.get(k)
                 elif k in ("ncp_sparsity", "ncp_seed"):

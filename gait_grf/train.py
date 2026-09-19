@@ -196,6 +196,7 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
         ode_unfolds=cfg.get("ode_unfolds", 6),
         attn_heads=cfg.get("attn_heads", 8),
         cell=cfg.get("cell", "ltc"),
+        press_branch=bool(cfg.get("press_branch", False)),
         ncp_units=cfg.get("ncp_units"),
         ncp_sparsity=cfg.get("ncp_sparsity", 0.5),
         ncp_seed=cfg.get("ncp_seed", 22222),
@@ -555,6 +556,13 @@ def main(argv=None):
         help="ltc_attn 混合架构的自注意力头数（仅 --model ltc_attn 使用）",
     )
     parser.add_argument(
+        "--press-branch",
+        action="store_true",
+        help="双分支压力空间编码（issue #0015，仅 --model ltc_attn）：特征末 90 维"
+        "（原始 45 点×双足）经专用卷积编码器接入（ReZero 零初始化门控，初始等价"
+        "关闭）；需配合 --features kinematic_dyn_p90",
+    )
+    parser.add_argument(
         "--cell",
         default="ltc",
         choices=["ltc", "mix"],
@@ -670,6 +678,7 @@ def main(argv=None):
         "ode_unfolds": args.ode_unfolds,
         "attn_heads": args.attn_heads,
         "cell": args.cell,
+        "press_branch": args.press_branch,
         "ncp_units": args.ncp_units,
         "ncp_sparsity": args.ncp_sparsity,
         "optimizer": args.optimizer,

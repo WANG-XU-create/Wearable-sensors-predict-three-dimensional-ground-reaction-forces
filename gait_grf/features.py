@@ -42,7 +42,7 @@ mounting 规整（v2 分析 §4 B-7，2026-09-06）——A5 负结果与 EXP-010
 
 import numpy as np
 
-from .constants import FEATURE_COLS, SAMPLE_RATE_HZ, STATIC_BASELINE_FRAMES
+from .constants import FEATURE_COLS, PRESSURE_COLS, SAMPLE_RATE_HZ, STATIC_BASELINE_FRAMES
 
 # 传感器 -> 四元数列号（大腿/小腿/躯干原始列名 q1–q4，双足 q0–q3，
 # 见 data/subjectdata/docs/subject_info.md），加载后统一按 (w,x,y,z) 处理。
@@ -81,6 +81,7 @@ FEATURE_MODES = (
     "kinematic_acc",
     "kinematic_dyn",
     "kinematic_dyn_pca",
+    "kinematic_dyn_p90",
 )
 
 _SELFREL_COLS = [f"{s}_selfrel_r{a}" for s in _SENSOR_QIDX for a in ("x", "y", "z")]
@@ -125,6 +126,10 @@ def kinematic_feature_names(mode="kinematic"):
     if mode == "kinematic_dyn_pca":
         # 布局与 dyn 完全一致（列名同语义槽位），仅 rotvec 块被旋转到本 trial 主轴基
         return kinematic_feature_names("kinematic_dyn")
+    if mode == "kinematic_dyn_p90":
+        # 探针假设验证（issue #0015）：dyn + 原始 90 通道压力（每足 45 点，
+        # 保留空间分布信息——剪切力由 CoP 动态驱动，12 个摘要标量将其丢弃）
+        return kinematic_feature_names("kinematic_dyn") + list(PRESSURE_COLS)
     raise ValueError(f"未知特征模式 {mode!r}，可选：{FEATURE_MODES}")
 
 
@@ -292,8 +297,12 @@ def derive_kinematic_features(sensor_df, mode="kinematic"):
         blocks.append(_pressure_summary(sensor_df))
         feats = np.concatenate(blocks, axis=1)
     else:
-        # pca 模式与 dyn 共享块结构（仅 rotvec 块被旋转），差分条件按 dyn 走
-        base_mode = "kinematic_dyn" if mode == "kinematic_dyn_pca" else mode
+        # pca/p90 模式与 dyn 共享块结构（pca 仅 rotvec 块被旋转、p90 附加原始压力），
+        # 差分条件按 dyn 走
+        base_mode = (
+            "kinematic_dyn" if mode in ("kinematic_dyn_pca", "kinematic_dyn_p90")
+            else mode
+        )
         selfrel = np.concatenate(
             [quat_to_rotvec(selfrel_q[s]) for s in _SENSOR_QIDX], axis=1
         )  # (N,21) 基线相对姿态
@@ -316,6 +325,11 @@ def derive_kinematic_features(sensor_df, mode="kinematic"):
         blocks.append(press)
         if base_mode == "kinematic_dyn":
             blocks.append(_diff(press))  # 压力变化率（加载率）
+        if mode == "kinematic_dyn_p90":
+            # 原始 90 通道压力（右 45 + 左 45，列序即 PRESSURE_COLS）
+            blocks.append(
+                sensor_df[list(PRESSURE_COLS)].to_numpy(dtype=np.float32)
+            )
         feats = np.concatenate(blocks, axis=1)
 
     expected = len(kinematic_feature_names(mode))

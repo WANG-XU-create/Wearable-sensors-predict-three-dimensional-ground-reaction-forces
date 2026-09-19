@@ -341,3 +341,65 @@ class TestGaitLTCNCP(unittest.TestCase):
         y.pow(2).mean().backward()
         got = sum(1 for p in m.parameters() if p.grad is not None and p.grad.abs().sum() > 0)
         self.assertGreater(got, 0)
+
+
+class TestPressureBranch(unittest.TestCase):
+    """issue #0015：压力空间双分支（--press-branch + kinematic_dyn_p90）。"""
+
+    def test_encoder_shape_and_causality(self):
+        from gait_grf.models import PressureSpatialEncoder
+
+        enc = PressureSpatialEncoder(45, 16)
+        x = torch.randn(B, T, 90)
+        y = enc(x)
+        self.assertEqual(tuple(y.shape), (B, T, 16))
+        self.assertTrue(torch.isfinite(y).all())
+        # 因果性：未来帧扰动不得影响过去输出
+        x2 = x.clone()
+        x2[:, -10:] += 10.0
+        enc.eval()
+        with torch.no_grad():
+            self.assertTrue(torch.allclose(enc(x)[:, :-30], enc(x2)[:, :-30], atol=1e-5))
+
+    def test_odd_hidden_raises(self):
+        from gait_grf.models import PressureSpatialEncoder
+
+        with self.assertRaises(ValueError):
+            PressureSpatialEncoder(45, 15)
+
+    def test_rezero_starts_closed(self):
+        # press_scale 零初始化：分支关闭时输出与压力块内容无关（行为等价基础模型）
+        from gait_grf.models import make_model
+
+        torch.manual_seed(3)
+        m = make_model("ltc_attn", input_size=213, output_size=OUT,
+                       hidden=16, layers=2, ode_unfolds=2, press_branch=True)
+        self.assertTrue((m.press_scale == 0).all())
+        m.eval()
+        x = torch.randn(B, T, 213)
+        x2 = x.clone()
+        x2[..., -90:] = torch.randn(B, T, 90)  # 压力块整体置换
+        with torch.no_grad():
+            np.testing.assert_allclose(m(x).numpy(), m(x2).numpy(), rtol=1e-6)
+
+    def test_gate_grad_flow(self):
+        # scale=0 时编码器无梯度（门关闭）、scale 自身有梯度；打开后编码器有梯度
+        from gait_grf.models import make_model
+
+        m = make_model("ltc_attn", input_size=213, output_size=OUT,
+                       hidden=16, layers=1, ode_unfolds=2, press_branch=True)
+        m(torch.randn(B, T, 213)).pow(2).mean().backward()
+        self.assertIsNotNone(m.press_scale.grad)
+        self.assertGreater(m.press_scale.grad.abs().sum().item(), 0)
+        enc_grads = [p.grad for p in m.press_enc.parameters()]
+        self.assertTrue(all(g is None or g.abs().sum() == 0 for g in enc_grads))
+        with torch.no_grad():
+            m.press_scale.fill_(0.5)
+        m.zero_grad()
+        m(torch.randn(B, T, 213)).pow(2).mean().backward()
+        enc_grads = [p.grad for p in m.press_enc.parameters()]
+        self.assertTrue(any(g is not None and g.abs().sum() > 0 for g in enc_grads))
+
+    def test_input_size_guard(self):
+        with self.assertRaises(ValueError):
+            make_model("ltc_attn", input_size=90, hidden=16, press_branch=True)

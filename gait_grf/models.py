@@ -317,6 +317,49 @@ class GaitLTCNCP(nn.Module):
         return out  # motor 状态即输出 (B, T, output_size)
 
 
+class PressureSpatialEncoder(nn.Module):
+    """每足 45 通道压力场的多尺度因果时序编码（issue #0015）。
+
+    物理动机：剪切力（vx/vz）由足底压力中心（CoP）动态驱动，而 12 个压力摘要
+    标量丢弃了空间分布。探针实证（LOSO Ridge，2026-09-19）：90 通道原始压力
+    使 R_vx +0.055（α 1e2–1e4 稳健），但线性模型被冗余稀释（L_vx −0.061）——
+    信息在、需非线性编码。结构对称 CausalMultiScaleProj：每足 depthwise 时序
+    卷积（3/1、7/2、15/3，感受野约 3/13/43 帧）+ pointwise 融合，每足出
+    hidden/2，拼接为 hidden。全部左填充，严格因果。
+    """
+
+    _SCALES = ((3, 1), (7, 2), (15, 3))
+
+    def __init__(self, channels_per_foot, hidden_size):
+        super().__init__()
+        if hidden_size % 2:
+            raise ValueError(f"hidden_size {hidden_size} 须为偶数（每足 hidden/2）")
+        self.channels_per_foot = channels_per_foot
+        self.per_foot_out = hidden_size // 2
+        self.dw = nn.ModuleList()
+        self.pads = []
+        for k, d in self._SCALES:
+            self.dw.append(nn.Conv1d(channels_per_foot, channels_per_foot, k,
+                                     dilation=d, groups=channels_per_foot, bias=False))
+            self.pads.append(((k - 1) * d, 0))
+        self.pointwise = nn.Conv1d(
+            channels_per_foot * len(self._SCALES), self.per_foot_out, 1
+        )
+
+    def _encode_foot(self, x):
+        # (B, 45, T) -> (B, hidden/2, T)
+        feats = [conv(F.pad(x, pad)) for conv, pad in zip(self.dw, self.pads)]
+        return self.pointwise(torch.cat(feats, dim=1))
+
+    def forward(self, x):
+        # (B, T, 2*C) -> (B, T, hidden)；列序 = 右足 C 通道 + 左足 C 通道
+        c = self.channels_per_foot
+        xr = x[..., :c].transpose(1, 2)
+        xl = x[..., c:].transpose(1, 2)
+        out = torch.cat([self._encode_foot(xr), self._encode_foot(xl)], dim=1)
+        return out.transpose(1, 2)
+
+
 class GaitLTCAttn(nn.Module):
     """LTC + 多尺度因果卷积前端 + 双向自注意力 + ReZero 门控（借鉴 main.py，issue #0011）。
 
@@ -328,13 +371,28 @@ class GaitLTCAttn(nn.Module):
     """
 
     def __init__(self, input_size, output_size=6, hidden=32, layers=1, dropout=0.0,
-                 ode_unfolds=6, attn_heads=8, max_len=100, cell="ltc"):
+                 ode_unfolds=6, attn_heads=8, max_len=100, cell="ltc",
+                 press_branch=False, press_channels=90):
         super().__init__()
         if layers < 1:
             raise ValueError(f"layers 必须 >= 1，得到 {layers}")
         if cell not in ("ltc", "mix"):
             raise ValueError(f"未知 cell {cell!r}，可选 ltc/mix")
-        self.input_proj = CausalMultiScaleProj(input_size, hidden)
+        self.press_branch = press_branch
+        if press_branch:
+            # 双分支：运动学块（前 input_size-press_channels 维）走原卷积投影，
+            # 压力空间块（末 press_channels 维，右45+左45）走专用编码器
+            if input_size <= press_channels:
+                raise ValueError(
+                    f"press_branch 需要 input_size > {press_channels}（运动学块 + "
+                    f"压力块），得到 {input_size}"
+                )
+            self.press_channels = press_channels
+            kin_size = input_size - press_channels
+            self.input_proj = CausalMultiScaleProj(kin_size, hidden)
+            self.press_enc = PressureSpatialEncoder(press_channels // 2, hidden)
+        else:
+            self.input_proj = CausalMultiScaleProj(input_size, hidden)
         if cell == "mix":
             self.rnn = nn.ModuleList(
                 [MixedLTCCell(hidden, hidden, ode_unfolds=ode_unfolds)
@@ -354,6 +412,10 @@ class GaitLTCAttn(nn.Module):
         # 才开始学习——主干先学，全局上下文按需接入
         self.attn_scale = nn.Parameter(torch.zeros(hidden))
         self.skip_scale = nn.Parameter(torch.zeros(hidden))  # ReZero：从 0 开始
+        if press_branch:
+            # 压力空间分支同 ReZero 纪律：初始关闭，模型按需打开（与 attn_scale
+            # 同构；避免弱信号分支无条件污染——A4 镜像增广的教训）
+            self.press_scale = nn.Parameter(torch.zeros(hidden))
         self.head = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.ReLU(),
@@ -362,8 +424,13 @@ class GaitLTCAttn(nn.Module):
         )
 
     def forward(self, x):
-        feat = self.input_proj(x)  # 快路径（局部多尺度特征），跳连复用
-        h = feat
+        if self.press_branch:
+            c = self.press_channels
+            feat = self.input_proj(x[..., :-c])  # 运动学块快路径，跳连复用
+            h = feat + self.press_scale * self.press_enc(x[..., -c:])
+        else:
+            feat = self.input_proj(x)  # 快路径（局部多尺度特征），跳连复用
+            h = feat
         for i, rnn in enumerate(self.rnn):
             out = rnn(h) if isinstance(rnn, MixedLTCCell) else rnn(h)[0]
             # 第 0 层输入无同维残差（卷积投影非 hidden 语义），深层做序列级残差
@@ -380,9 +447,10 @@ MODELS = {"ltc": GaitLTC, "ltc_attn": GaitLTCAttn, "ltc_ncp": GaitLTCNCP,
 
 def make_model(name, input_size, output_size=6, hidden=32, layers=1, dropout=0.0, kernel=5,
                ode_unfolds=6, attn_heads=8, cell="ltc", ncp_units=None,
-               ncp_sparsity=0.5, ncp_seed=22222):
+               ncp_sparsity=0.5, ncp_seed=22222, press_branch=False):
     """按名字构造模型；kernel 仅 TCN 使用，ode_unfolds 仅 LTC 系使用，attn_heads
-    仅 ltc_attn，cell 仅 ltc/ltc_attn（ltc=稠密 / mix=官方混合细胞），ncp_* 仅 ltc_ncp。"""
+    仅 ltc_attn，cell 仅 ltc/ltc_attn（ltc=稠密 / mix=官方混合细胞），ncp_* 仅
+    ltc_ncp，press_branch 仅 ltc_attn（双分支：特征末 90 维为原始压力块）。"""
     if name not in MODELS:
         raise ValueError(f"未知模型 {name!r}，可选：{sorted(MODELS)}")
     if name == "tcn":
@@ -396,5 +464,6 @@ def make_model(name, input_size, output_size=6, hidden=32, layers=1, dropout=0.0
                           ncp_sparsity=ncp_sparsity, ncp_seed=ncp_seed)
     if name == "ltc_attn":
         return GaitLTCAttn(input_size, output_size, hidden, layers, dropout,
-                           ode_unfolds=ode_unfolds, attn_heads=attn_heads, cell=cell)
+                           ode_unfolds=ode_unfolds, attn_heads=attn_heads, cell=cell,
+                           press_branch=press_branch)
     return MODELS[name](input_size, output_size, hidden, layers, dropout)

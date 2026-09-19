@@ -558,6 +558,13 @@ z1 0.9529(+0.010) / z2 0.9680(+0.009) / z3 0.9687(+0.015) / z4 0.9800(+0.003) / 
 
 ## 数据备忘
 
+### 2026-09-19 压力空间信息探针 + 双分支架构（issue #0015，目标：6 分量 r>0.95）
+
+- **目标重申**（用户）：左右足各分量 r>0.95，先定架构、基线/种子押后。EXP-013 差距轴 = R_vx 0.789 / L_vz 0.872 / R_vz 0.872 / L_vx 0.905（vy 双足已达标 0.966/0.967）。
+- **探针**（LOSO Ridge 帧级，新特征模式 `kinematic_dyn_p90` = dyn 123 + 原始 90 通道压力 = 213 维）：R_vx **0.677→0.732（+0.055，α 1e2/1e3/1e4 三档稳健）**——剪切力的物理驱动是 CoP 动态，12 个压力摘要标量把空间分布丢掉了，右足 vx 的信息在原始压力场里；线性模型 L_vx −0.061/L_vz −0.028（冗余稀释）→ 需非线性编码器。
+- **架构落地**（测试 129 全绿 +6）：`PressureSpatialEncoder`（每足 45ch depthwise 多尺度因果卷积 3/1、7/2、15/3 + pointwise，每足 hidden/2）；`GaitLTCAttn --press-branch`（特征末 90 维进压力分支，前 123 维走原投影，`press_scale` ReZero 零初始化门控——初始严格等于 EXP-011，测试验证输出与压力块内容无关；门开度可解释同 attn_scale）。checkpoint/evaluate/ensemble 全兼容。
+- **EXP-017 待跑**（用户手动）：`--model ltc_attn --press-branch --features kinematic_dyn_p90`，其余 = EXP-011 配方，单因素。验收：逐轴 r（重点 R_vx/L_vz/R_vz）+ |press_scale| 开度。否定判据：门开度≈0 且逐轴无增益 → 信息假设对线性/该编码器不成立。
+
 ### 2026-09-19 EXP-013/016 归因后置评估（免重训，EXP-011 checkpoint @ D1-only 口径）——数据修复贡献 ~90%
 
 - **方法**：EXP-011 的 8 个 checkpoint（权重不动）在当前代码默认口径下后置评估（`evaluate --out metrics_full_d1only.csv`）：trial 发现自动剔除 ZWJ10–20（D1），plate_zero=auto 回退旧 checkpoint 的 False（目标不校零，与旧模型约定一致）→ 等效「D1-only 评估口径」。自检：z1–z6/z8 六折逐位复现原 metrics.csv（Δ=0.0000），管线可信。另跑 `--include-invalid --per-trial`（metrics_per_trial_withinvalid.csv）取得故障 trial 逐行残差。
