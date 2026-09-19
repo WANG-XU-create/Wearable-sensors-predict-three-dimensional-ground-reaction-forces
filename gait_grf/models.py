@@ -219,13 +219,13 @@ class RelPosSelfAttention(nn.Module):
 
 
 class GaitLTCAttn(nn.Module):
-    """LTC + 多尺度因果卷积前端 + 双向自注意力 + ReZero 跳连（借鉴 main.py，issue #0011）。
+    """LTC + 多尺度因果卷积前端 + 双向自注意力 + ReZero 门控（借鉴 main.py，issue #0011）。
 
     数据流：(B,T,F) -> 卷积投影(hidden) -> 堆叠 LTC（seq 级 LayerNorm/残差，
-    不碰 LTC 内部状态）-> 双向注意力（残差+LayerNorm）-> ReZero 跳连（逐通道
-    zero-init，先学主干后开跳连，修 main.py 的 sigmoid(0)=0.5 半开问题；conv
-    特征已是 hidden 维，免 skip_proj）-> 两层 MLP 头。dropout 沿用 cfg（单因子
-    纪律，不采纳 main.py 的 0.5）。
+    不碰 LTC 内部状态）-> 双向注意力分支（ReZero 逐通道 zero-init 门控：模型
+    自行决定接纳多少全局上下文——EXP-010 示注意力无条件混入会平滑峰值、放大
+    z7 域偏移）-> ReZero 跳连（conv 快路径，zero-init）-> 两层 MLP 头。
+    dropout 沿用 cfg（单因子纪律，不采纳 main.py 的 0.5）。
     """
 
     def __init__(self, input_size, output_size=6, hidden=32, layers=1, dropout=0.0,
@@ -243,6 +243,9 @@ class GaitLTCAttn(nn.Module):
         self.self_attn = RelPosSelfAttention(hidden, num_heads=attn_heads,
                                              dropout=dropout, max_len=max_len)
         self.attn_norm = nn.LayerNorm(hidden)
+        # ReZero 门控（零初始化）：attn_scale 先拿到梯度、打开分支后注意力参数
+        # 才开始学习——主干先学，全局上下文按需接入
+        self.attn_scale = nn.Parameter(torch.zeros(hidden))
         self.skip_scale = nn.Parameter(torch.zeros(hidden))  # ReZero：从 0 开始
         self.head = nn.Sequential(
             nn.Linear(hidden, hidden),
@@ -259,7 +262,7 @@ class GaitLTCAttn(nn.Module):
             # 第 0 层输入无同维残差（卷积投影非 hidden 语义），深层做序列级残差
             h = self.norms[i](out if i == 0 else out + h)
             h = self.dropout(h)
-        h = h + self.attn_norm(h + self.self_attn(h))
+        h = h + self.attn_scale * self.attn_norm(h + self.self_attn(h))
         h = h + self.skip_scale * feat
         return self.head(h)
 

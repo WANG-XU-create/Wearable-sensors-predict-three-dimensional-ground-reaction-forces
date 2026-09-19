@@ -179,6 +179,9 @@ class TestLTCAttn(unittest.TestCase):
         torch.manual_seed(1)
         model = make_model("ltc_attn", input_size=16, output_size=OUT,
                            hidden=16, layers=1)
+        # ReZero 门控零初始化时注意力无贡献（因果性由门控关断）；打开门再验双向性
+        with torch.no_grad():
+            model.attn_scale.fill_(1.0)
         model.eval()
         x = torch.randn(2, 60, 16)
         k = 30
@@ -218,3 +221,18 @@ class TestLTCAttn(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAttnGate(unittest.TestCase):
+    """EXP-011：注意力分支 ReZero 门控（修 EXP-010 峰值回退与 z7 过拟合）。"""
+
+    def test_attn_gate_starts_closed_and_learns(self):
+        m = make_model("ltc_attn", input_size=16, output_size=OUT, hidden=16, layers=1)
+        self.assertTrue(torch.all(m.attn_scale == 0.0), "注意力门控必须零初始化")
+        # 门控参数自身必须能拿到梯度（ReZero 机制：α 先动、分支后学）
+        x = torch.randn(2, 50, 16)
+        loss = torch.nn.functional.mse_loss(m(x), torch.zeros(2, 50, OUT))
+        loss.backward()
+        self.assertIsNotNone(m.attn_scale.grad)
+        self.assertTrue(torch.isfinite(m.attn_scale.grad).all())
+        self.assertFalse(torch.all(m.attn_scale.grad == 0.0))

@@ -30,6 +30,14 @@ jointrel 幅值 6）+ 压力摘要，完全不含受绑扎旋转污染的轴向�
 - feature_mode="kinematic_dyn"（123 维）：+ jointrel rotvec 一阶差分 +
   压力摘要一阶差分（加载率）。
 三档阶梯用于探针消融：姿态 -> +速度 -> +加速度 -> +关节速度/压力变化率。
+
+mounting 规整（v2 分析 §4 B-7，2026-09-06）——A5 负结果与 EXP-010 的 z7 退化
+共同指向「特征在传感器系、目标在实验室系」的残余错配（IMU 相对上电姿态、
+无重力对齐，实验室航向不可观测，只能从运动统计近似）：
+- feature_mode="kinematic_dyn_pca"（123 维，同 dyn 布局）：逐传感器/逐关节把
+  rotvec（含差分块）旋转到该 trial 运动主轴基上（trial 级 PCA，无标签，部署
+  对应「上电后采集几步做自校准」）；轴语义从传感器轴变为「主摆动/次摆动/
+  面外」方向，消绑扎旋转偏差。符号约定见 _pca_align_blocks。
 """
 
 import numpy as np
@@ -63,7 +71,8 @@ _PRESSURE_REGIONS = ((0, 15), (15, 30), (30, 45))
 
 # 支持的特征模式：raw=原始 120 维；kinematic=运动学前端全量（51 维）；
 # kinematic_min=仅角度量+压力摘要（25 维）；kinematic_vel/acc/dyn=动力学
-# 扩展阶梯（72/93/123 维，见模块 docstring）
+# 扩展阶梯（72/93/123 维，见模块 docstring）；kinematic_dyn_pca=dyn 的
+# mounting 规整版（B-7，逐块 PCA 对齐，123 维）
 FEATURE_MODES = (
     "raw",
     "kinematic",
@@ -71,6 +80,7 @@ FEATURE_MODES = (
     "kinematic_vel",
     "kinematic_acc",
     "kinematic_dyn",
+    "kinematic_dyn_pca",
 )
 
 _SELFREL_COLS = [f"{s}_selfrel_r{a}" for s in _SENSOR_QIDX for a in ("x", "y", "z")]
@@ -112,6 +122,9 @@ def kinematic_feature_names(mode="kinematic"):
             + _JOINTREL_COLS + _JOINTREL_VEL_COLS
             + _PRESS_SUMMARY_COLS + _PRESS_VEL_COLS
         )
+    if mode == "kinematic_dyn_pca":
+        # 布局与 dyn 完全一致（列名同语义槽位），仅 rotvec 块被旋转到本 trial 主轴基
+        return kinematic_feature_names("kinematic_dyn")
     raise ValueError(f"未知特征模式 {mode!r}，可选：{FEATURE_MODES}")
 
 
@@ -224,6 +237,42 @@ def static_selfrel(q, n_frames=STATIC_BASELINE_FRAMES):
     return quat_multiply(quat_conj(static_baseline_quat(q, n_frames)), q)
 
 
+def _pca_align_blocks(a, n_blocks):
+    """B-7 mounting 规整：把 (N, 3*n_blocks) 的逐块 rotvec 旋转到各块本 trial 主轴基。
+
+    每块 (N,3) 对中心化协方差做特征分解，轴按方差降序；符号约定消 PCA 二义性：
+    u1 取三阶矩 Σ((r−μ)·u1)³ > 0 的方向（步态屈伸不对称给出一致符号），u3 =
+    u1×u2 保证右手系。只旋转不平移（偏移交给下游 StandardScaler）。退化为常数
+    方差的块（如全零四元数填充段）返回单位阵。差分与常量旋转可交换
+    （d(Rr)/dt = R·dr/dt），故对旋转后的 rotvec 统一做差分即可，差分块无需单独
+    处理。基由 trial 自身运动统计决定（无标签），部署对应「上电后采几步自校准」。
+    """
+    out = np.empty_like(a)
+    eps = 1e-12
+    for b in range(n_blocks):
+        r = a[:, 3 * b:3 * b + 3]
+        mu = r.mean(axis=0)
+        X = r - mu
+        cov = X.T @ X / max(len(r), 1)
+        w, V = np.linalg.eigh(cov)  # 升序
+        order = np.argsort(w)[::-1]  # 方差降序
+        w, V = w[order], V[:, order]
+        if w[0] < eps:  # 常数块：无主轴可定，原样保留
+            out[:, 3 * b:3 * b + 3] = r
+            continue
+        u1 = V[:, 0]
+        # 符号约定：主轴三阶矩为正（步态摆动屈/伸不对称性提供一致方向）
+        skew = np.sum((X @ u1) ** 3)
+        if skew < 0:
+            u1 = -u1
+        u2 = V[:, 1]
+        u3 = np.cross(u1, u2)
+        u2 = np.cross(u3, u1)  # 右手系正交基
+        R = np.stack([u1, u2, u3])  # (3,3)，行 = 主轴
+        out[:, 3 * b:3 * b + 3] = r @ R.T
+    return out
+
+
 def derive_kinematic_features(sensor_df, mode="kinematic"):
     """传感器 DataFrame -> 运动学特征 (N, D) float32，列序见 kinematic_feature_names。"""
     quats = {s: load_quat_wxyz(sensor_df, s) for s in _SENSOR_QIDX}
@@ -243,22 +292,29 @@ def derive_kinematic_features(sensor_df, mode="kinematic"):
         blocks.append(_pressure_summary(sensor_df))
         feats = np.concatenate(blocks, axis=1)
     else:
+        # pca 模式与 dyn 共享块结构（仅 rotvec 块被旋转），差分条件按 dyn 走
+        base_mode = "kinematic_dyn" if mode == "kinematic_dyn_pca" else mode
         selfrel = np.concatenate(
             [quat_to_rotvec(selfrel_q[s]) for s in _SENSOR_QIDX], axis=1
         )  # (N,21) 基线相对姿态
         jointrel = np.concatenate(_joint_rotvecs(selfrel_q), axis=1)  # (N,18)
+        if mode == "kinematic_dyn_pca":
+            # B-7：逐传感器/逐关节旋转到本 trial 主轴基；差分在旋转后统一计算
+            # （d(Rr)/dt = R·dr/dt，与先差分后旋转等价）
+            selfrel = _pca_align_blocks(selfrel, len(_SENSOR_QIDX))
+            jointrel = _pca_align_blocks(jointrel, len(_JOINT_PAIRS))
         press = _pressure_summary(sensor_df)  # (N,12)
 
         blocks = [selfrel]
-        if mode in ("kinematic_vel", "kinematic_acc", "kinematic_dyn"):
+        if base_mode in ("kinematic_vel", "kinematic_acc", "kinematic_dyn"):
             blocks.append(_diff(selfrel))  # 环节角速度
-        if mode in ("kinematic_acc", "kinematic_dyn"):
+        if base_mode in ("kinematic_acc", "kinematic_dyn"):
             blocks.append(_diff(_diff(selfrel)))  # 环节角加速度
         blocks.append(jointrel)
-        if mode == "kinematic_dyn":
+        if base_mode == "kinematic_dyn":
             blocks.append(_diff(jointrel))  # 关节角速度
         blocks.append(press)
-        if mode == "kinematic_dyn":
+        if base_mode == "kinematic_dyn":
             blocks.append(_diff(press))  # 压力变化率（加载率）
         feats = np.concatenate(blocks, axis=1)
 

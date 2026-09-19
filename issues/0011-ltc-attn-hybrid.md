@@ -1,7 +1,7 @@
 ---
 id: 0011
-title: "GaitLTCAttn：借鉴 main.py 混合架构（卷积前端+双向注意力+ReZero 跳连）"
-status: open          # open | closed
+title: "GaitLTCAttn：借鉴 main.py 混合架构（卷积前端+双向注意力+ReZero 门控）"
+status: closed         # open | closed
 labels: [ready-for-agent]
 assignee: claude
 blocked_by: []
@@ -41,3 +41,7 @@ updated: 2026-09-06
 ### @claude — 2026-09-06
 
 EXP-010 完成（用户手动跑）并登记 experiment-log：**均值持平（r 0.9306 vs 0.9291，p=0.88）但两极分化**——6/8 折升（z4 0.980 单折历史新高），z7 −0.058 / z1 −0.019（双向全局上下文放大域偏移）；**R_vx 0.700→0.766（8/8 折升，首个系统性移动 R_vx 的模型侧手段，超 TCN 0.740）**；L_vy 峰值 16.77→21.47 回退（注意力平滑吃掉 B6 收益）。净判断：方向有价值、配方不达标；候选后续 ①注意力分支 ReZero 门控保峰值 ②与 B7 组合救 z7 ③注意力放 TCN 上 ④暂缓。票保持 open 等拍板。
+
+### @claude — 2026-09-06（EXP-011 关单）
+
+门控版（EXP-011，`attn_scale` 逐通道零初始化）达成设计目标三项全中：**r 0.9365 = LTC 系历史最高**（vs 基线 0.9291 p=0.078，7/8 折 ≥ 基线，≈ TCN 0.9370）；z7 −0.057→−0.009、L_vy 峰值 21.47→16.83 完全恢复、**R_vx 0.774 保留并扩大**；逐轴 6/6 全升、RMSE 18.07 最优。门控开度 0.14–0.32（适度打开，可解释）。**新默认配方：ltc_attn 门控版 + kinematic_dyn + ou=2 + pw1**。后续候选：3 种子显著性 / λ=2 / 因果版注意力 / 数据层排查。关单。
