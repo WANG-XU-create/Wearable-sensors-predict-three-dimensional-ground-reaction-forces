@@ -507,6 +507,15 @@ z7：0.801 → 0.762（−0.039）；峰值误差 vy L 19.23→20.62、R 18.36�
 
 ## 数据备忘
 
+### 2026-09-13 数据层诊断批次：z7 鞋垫故障（D1）+ 力板零漂（D2），数据集 224→213
+
+- **背景**：z7 折连续 6 轮实验离群（r 0.68–0.80，其余折 0.94–0.98），数据层排查（v2 改进清单遗留项）与右足 vx 排查一次做完。全部为无标签分析（只读传感器/测力台原始数据）。
+- **发现 1：z7（ZWJ）左鞋垫硬件故障，trial 10–20（11/29）**。左足压力峰 15.6→11.5 unit（−26%）而测力台左足 vy 峰 603→598 N 纹丝不动（步态未变、力板正常，仅鞋垫增益中途掉了 21 起恢复——典型移位/失接触）；右足鞋垫全程稳定（N/unit ~39）。该 11 个 trial 的「低压力↔正常力」矛盾样本同时污染训练（其余 7 折）与评估（z7 折左 vy 崩坏即此）。**处置（用户拍板）：整 trial 排除**，`INVALID_TRIALS` 登记 ZWJ10–20，数据集 224→213（226 口径含 LQW03/04）。逐受试者压力/力增益复核：其余 7 人 L/R 增益均在其自身 ±15% 内，无同类故障。
+- **发现 2：全数据集力板 vx/vz 通道未校零**。8 人 × 双板的无接触期（|vy|<10N 帧）vx 恒读 **−25~−38 N**、vz 恒读 −3~−11 N（帧间 std 仅 0.1–0.6 N，纯常数）；vy 通道 −0.1~−2.4 N 可忽略但一并校零。"calibrated" 导出未含 vx/vz 零点校正。**处置**：`extract_targets(plate_zero=True)` 逐 trial 逐足以无接触帧中位数扣三轴零漂（标准力板 zeroing，无标签、逐 trial 独立估计可吸收 z3 板中途重校零类批内差异）；train 默认开（`--no-plate-zero` 恢复历史口径），随 checkpoint config 记录。影响评估：模型此前只能学群体均值偏置（~−32 N），跨受试者不可预测部分 ≈ ±5 N 进 vx RMSE（现 L_vx 10.5 / R_vx 15.7 N，去偏后 ~−4%）；r 不变（Pearson 对常数偏移不变）；主要收益是物理正确性（摆动相剪切力归零）+ 峰值/冲量 vx/vz 口径干净。
+- **发现 3（排除项）**：步态节律（0.97–1.19 Hz）、压力-体重比、vy 峰值 %BW 跨受试者均在正常范围——z7 偏移非步态突变所致；右足 vx 弱势（r 0.774）不能由零漂解释（不可预测部分仅 ~5 N，信号本身弱 + 域异质），维持数据层后续排查。z6 折高 RMSE（19.7 %BW）高 r（0.966）指向幅值回归问题（60 kg 轻体重放大绝对误差），后续观察项。
+- **代码**（issue #0013，测试 105 全绿）：D1 `INVALID_TRIALS` + `discover_trial_pairs(include_invalid)`；D2 plate_zero 贯穿 data/train/evaluate（缓存键、GRFSequenceDataset、predict_trial、evaluate `--plate-zero auto|on|off`）；③ `--lr-scheduler plateau|cosine` + `--grad-clip`（history 记录逐轮 lr）；M3 evaluate `--per-trial`（逐 trial 指标表，诊断基建）+ `--ensemble`（多种子 checkpoint 平均，口径字段强校验）+ `--include-invalid`。
+- **口径警告**：本批次起所有新 run 为 **213-trial + plate_zero 口径**，与 EXP-001~011（224/226-trial、未校零）不可直接对比；旧 checkpoint 后置评估默认回退历史口径（evaluate 按 checkpoint config 判定）。EXP-012 起基线需在新口径重跑。
+
 ### 2026-09-06 3 种子显著性（v2 §4-B9，终版：r 显著、峰值有系统性代价）
 
 - **目的**：EXP-009（ltc 基线）vs EXP-011（ltc_attn 门控）唯一差异 = 架构，各跑 seed 42/43/44（共 6 run，~10h），把训练随机性方差与受试者方差分开。注意：E009@44 目录名为 `runs/ltc_kinematic_dyn_pw1_s4`（命令行截断，config 已验证 seed=44）。

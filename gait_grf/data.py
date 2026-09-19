@@ -168,21 +168,48 @@ def extract_features(sensor_df, feature_mode="raw"):
     raise ValueError(f"未知特征模式 {feature_mode!r}，可选：{FEATURE_MODES}")
 
 
-def extract_targets(qualisys_df, left_plate=1):
+def _plate_zero_offsets(t, thresh_N=10.0, min_frames=5):
+    """逐足力板零漂估计：无接触帧（|vy| < thresh_N）的三轴中位数。
+
+    2026-09-13 诊断确认："calibrated" Qualisys 导出的 vx/vz 通道并未校零——
+    8 人 × 双板的无接触期（vy≈0）vx 恒读 −25~−38 N、vz 恒读 −3~−11 N
+    （帧间 std 仅 0.1–0.6 N，纯常数；vy 通道仅 −0.1~−2.4 N）。阈值取 10 N：
+    高于 vy 自身零漂（≤2.4 N）远低于触板载荷（≥百 N 级），跨受试者稳健。
+    返回 (2, 3) 偏置表 [左足, 右足]；无接触帧不足 min_frames 的足返回全 0
+    （保守不校零）。无标签、不触碰输入特征。
+    """
+    offsets = np.zeros((2, 3))
+    for foot, base in enumerate((0, 3)):
+        mask = np.abs(t[:, base + 1]) < thresh_N
+        if mask.sum() >= min_frames:
+            offsets[foot] = np.median(t[mask][:, base : base + 3], axis=0)
+    return offsets
+
+
+def extract_targets(qualisys_df, left_plate=1, plate_zero=False):
     """提取目标并规范化为脚语义列序：前 3 列=左脚、后 3 列=右脚。
 
     z1–z5 左脚踩板1（列序 ground_force_1,2 原样）；z6–z8 左脚踩板2，
     交换两组列，使输出列序与受试者无关（否则左右脚语义随受试者组翻转，
     共享模型会学到两套矛盾映射的平均）。
+
+    plate_zero=True 时逐足扣除无接触帧零漂（见 _plate_zero_offsets），
+    逐 trial 独立估计（z3 板中途重校零的批内差异可被吸收）。默认 False
+    保持历史口径；train 入口默认开启并随 checkpoint config 记录。
     """
     first, second = ("1", "2") if left_plate == 1 else ("2", "1")
     cols = [f"ground_force_{p}_{a}" for p in (first, second) for a in ("vx", "vy", "vz")]
-    return _clean_array(qualisys_df[cols].to_numpy(dtype=float))
+    t = _clean_array(qualisys_df[cols].to_numpy(dtype=float))
+    if plate_zero:
+        offsets = _plate_zero_offsets(t)
+        for foot, base in enumerate((0, 3)):
+            t[:, base : base + 3] -= offsets[foot]
+    return t
 
 
 # 对齐结果缓存：LOSO 每折都要用同一批 trial，对齐是确定性的，按
-# (路径对, refine_radius, left_plate, feature_mode) 缓存后 8 折只做 1 次磁盘
-# 读取+对齐（224 次而不是 1792 次）。
+# (路径对, refine_radius, left_plate, feature_mode, plate_zero) 缓存后
+# 8 折只做 1 次磁盘读取+对齐（213 次而不是 1704 次）。
 _TRIAL_CACHE = {}
 
 
@@ -191,7 +218,12 @@ def clear_trial_cache():
 
 
 def load_aligned_trial(
-    sensor_path, qualisys_path, subject, refine_radius=DEFAULT_REFINE_RADIUS, feature_mode="raw"
+    sensor_path,
+    qualisys_path,
+    subject,
+    refine_radius=DEFAULT_REFINE_RADIUS,
+    feature_mode="raw",
+    plate_zero=False,
 ):
     """读取+对齐+提取单个 trial，返回 (features, targets)，带缓存。"""
     key = (
@@ -200,6 +232,7 @@ def load_aligned_trial(
         refine_radius,
         LEFT_FOOT_PLATE[subject],
         feature_mode,
+        plate_zero,
     )
     if key not in _TRIAL_CACHE:
         sensor, qual, _ = align(
@@ -207,7 +240,9 @@ def load_aligned_trial(
         )
         _TRIAL_CACHE[key] = (
             extract_features(sensor, feature_mode=feature_mode),
-            extract_targets(qual, left_plate=LEFT_FOOT_PLATE[subject]),
+            extract_targets(
+                qual, left_plate=LEFT_FOOT_PLATE[subject], plate_zero=plate_zero
+            ),
         )
     return _TRIAL_CACHE[key]
 
@@ -226,12 +261,13 @@ def window_trial(features, targets, window=DEFAULT_WINDOW, step=DEFAULT_STEP):
     return X.astype(np.float32), y.astype(np.float32)
 
 
-def discover_trial_pairs(subjectdata_root, subjects=None):
+def discover_trial_pairs(subjectdata_root, subjects=None, include_invalid=False):
     """按受试者+序号发现 trial，返回 (sensor_path, qualisys_path, subject) 三元组。
 
     subject 供目标列的板->脚规范化使用（LEFT_FOOT_PLATE）。subjects 为 z{n} 集合。
-    命中 INVALID_TRIALS（如 LQW03/04 的 IMU 全零文件）的 trial 连同其测力台
-    数据一并排除，不计入训练/评估。
+    命中 INVALID_TRIALS（LQW03/04 的 IMU 全零、ZWJ10–20 的左鞋垫增益故障）的
+    trial 连同其测力台数据一并排除，不计入训练/评估。include_invalid=True 供
+    数据诊断（如逐 trial 残差排查）显式包含无效 trial，不做过滤也不告警。
     """
     pairs = []
     skipped = []
@@ -245,7 +281,7 @@ def discover_trial_pairs(subjectdata_root, subjects=None):
             continue
         for sf in sorted(glob.glob(os.path.join(sensor_dir, f"{initials}*.csv"))):
             code = os.path.basename(sf)[len(initials):].replace(".csv", "")
-            if (z, code) in INVALID_TRIALS:
+            if (z, code) in INVALID_TRIALS and not include_invalid:
                 skipped.append((z, code))
                 continue
             qf = os.path.join(qual_dir, f"z{n}_{code}_mot_100Hz.csv")
@@ -253,7 +289,7 @@ def discover_trial_pairs(subjectdata_root, subjects=None):
                 pairs.append((sf, qf, z))
     if skipped:
         warnings.warn(
-            f"排除无效 trial（IMU 数据缺失，见 constants.INVALID_TRIALS）：{skipped}",
+            f"排除无效 trial（见 constants.INVALID_TRIALS）：{skipped}",
             stacklevel=2,
         )
     return pairs
@@ -278,6 +314,7 @@ class GRFSequenceDataset(Dataset):
         target_scaler=None,
         feature_mode="raw",
         mirror_aug=False,
+        plate_zero=False,
     ):
         self.window, self.step, self.refine_radius = window, step, refine_radius
         # A4 左右镜像增广：right_↔left_ 特征块互换 + 目标前后半（左/右足）互换，
@@ -287,7 +324,9 @@ class GRFSequenceDataset(Dataset):
         feat_perm = mirror_feature_perm(feature_mode) if mirror_aug else None
         Xs, ys = [], []
         for sp, qp, z in trial_pairs:
-            f, t = load_aligned_trial(sp, qp, z, refine_radius, feature_mode)
+            f, t = load_aligned_trial(
+                sp, qp, z, refine_radius, feature_mode, plate_zero=plate_zero
+            )
             variants = [(f, t)]
             if mirror_aug:
                 variants.append((f[:, feat_perm], t[:, TARGET_MIRROR_PERM]))

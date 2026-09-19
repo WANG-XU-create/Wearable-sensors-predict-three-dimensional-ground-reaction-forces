@@ -164,6 +164,79 @@ class TestExtract(unittest.TestCase):
         self.assertTrue(np.isfinite(f).all())
 
 
+class TestPlateZero(unittest.TestCase):
+    """D2 力板校零：无接触帧（|vy|<10N）中位数扣除 vx/vy/vz 零漂。"""
+
+    def _biased_qualisys(self, n=120, bias_l=(-30.0, -1.5, -8.0), bias_r=(25.0, 2.0, -5.0)):
+        """前 40 帧双足无接触（仅零漂），后 80 帧双足交替载荷的伪 trial。"""
+        rng = np.random.default_rng(11)
+        qual = _make_qualisys_df(n, rng)
+        load_l = np.zeros(n)
+        load_r = np.zeros(n)
+        load_l[40:80] = 600.0 + 50.0 * rng.standard_normal(40)
+        load_r[60:120] = 700.0 + 50.0 * rng.standard_normal(60)
+        for p, load, bias in (("1", load_l, bias_l), ("2", load_r, bias_r)):
+            qual[f"ground_force_{p}_vx"] = bias[0] + 0.1 * load * rng.standard_normal(n)
+            qual[f"ground_force_{p}_vy"] = bias[1] + load
+            qual[f"ground_force_{p}_vz"] = bias[2] + 0.1 * load * rng.standard_normal(n)
+        return qual, load_l, load_r
+
+    def test_plate_zero_removes_unloaded_bias(self):
+        qual, load_l, load_r = self._biased_qualisys()
+        t = extract_targets(qual, left_plate=1, plate_zero=True)
+        # 无接触帧（前 40 帧，双足 vy≈0）：三轴都应回到 ~0
+        np.testing.assert_allclose(t[:40, 0], 0.0, atol=1.0)   # L vx
+        np.testing.assert_allclose(t[:40, 1], 0.0, atol=0.5)   # L vy
+        np.testing.assert_allclose(t[:40, 2], 0.0, atol=1.0)   # L vz
+        np.testing.assert_allclose(t[:40, 3], 0.0, atol=1.0)   # R vx
+        # 载荷段 vy 保持原值（仅扣零漂 -1.5，不移除真实信号）
+        np.testing.assert_allclose(t[50:70, 1], load_l[50:70], rtol=1e-4)
+
+    def test_plate_zero_left_plate_swap(self):
+        # z6–z8 左脚踩板2：零漂估计必须跟着脚语义走（左足列取自板2）
+        qual, load_l, load_r = self._biased_qualisys(bias_l=(-30.0, -1.5, -8.0),
+                                                     bias_r=(25.0, 2.0, -5.0))
+        t = extract_targets(qual, left_plate=2, plate_zero=True)
+        np.testing.assert_allclose(t[:40, 0], 0.0, atol=1.0)   # L vx <- 板2 vx 零漂 25
+        np.testing.assert_allclose(t[:40, 3], 0.0, atol=1.0)   # R vx <- 板1 零漂 -30
+
+    def test_plate_zero_default_off_preserves_history(self):
+        qual, _, _ = self._biased_qualisys()
+        t_off = extract_targets(qual, left_plate=1)  # 默认 False=历史口径
+        self.assertAlmostEqual(float(np.median(t_off[:40, 0])), -30.0, places=6)
+
+    def test_plate_zero_no_unloaded_frames_is_noop(self):
+        # 双足全程载荷（无 |vy|<10N 帧）：保守不校零
+        rng = np.random.default_rng(12)
+        qual = _make_qualisys_df(60, rng)
+        for p in ("1", "2"):
+            qual[f"ground_force_{p}_vy"] = 500.0
+            qual[f"ground_force_{p}_vx"] = -30.0
+        t = extract_targets(qual, left_plate=1, plate_zero=True)
+        np.testing.assert_allclose(t[:, 0], -30.0)  # 未被改写
+
+    def test_dataset_plumbs_plate_zero(self):
+        # GRFSequenceDataset 透传 plate_zero：带零漂目标经校零后无接触段 ~0
+        with tempfile.TemporaryDirectory() as d:
+            rng = np.random.default_rng(13)
+            qual, load_l, _ = self._biased_qualisys()
+            sensor = _make_sensor_df(120, rng)
+            sensor["left_pressure_sum"] = np.maximum(load_l, 0.0) / 40.0
+            sensor["right_pressure_sum"] = 0.0
+            sp = os.path.join(d, "sensor.csv")
+            qp = os.path.join(d, "qual.csv")
+            sensor.to_csv(sp, index=False)
+            qual.to_csv(qp, index=False)
+            ds = GRFSequenceDataset([(sp, qp, "z1")], window=100, step=10,
+                                    plate_zero=True)
+            self.assertTrue(np.isfinite(ds.y).all())
+            # 反算回 N 空间验证零点：第一窗（帧 0-99，前 40 帧无接触）的
+            # 左足 vx 在无接触段应 ≈0（z-score 逆变换后）
+            yN = ds.target_scaler.inverse_transform(
+                ds.y.reshape(-1, 6)).reshape(ds.y.shape)
+            self.assertLess(float(np.abs(yN[0, :20, 0]).max()), 2.0)  # L vx 无接触段≈0
+
+
 class TestWindow(unittest.TestCase):
     def test_window_shapes_and_count(self):
         n, W, S = 145, 100, 10
@@ -332,18 +405,24 @@ class TestDiscover(unittest.TestCase):
             self.assertTrue(os.path.isfile(qp))
             self.assertEqual(z, "z1")
 
-    def test_discovers_all_224_pairs(self):
-        """226 个文件对中，LQW03/04（z1）IMU 数据全零（INVALID_TRIALS），
-        连同其测力台数据一并排除，有效 trial 对 = 224。"""
+    def test_discovers_all_213_pairs(self):
+        """226 个文件对中：LQW03/04（z1）IMU 全零、ZWJ10–20（z7）左鞋垫增益
+        故障（INVALID_TRIALS，2026-09-13 排除），连同测力台数据一并排除，
+        有效 trial 对 = 213。"""
         root = "/root/autodl-tmp/data/subjectdata"
         if not os.path.isdir(root):
             self.skipTest("subjectdata 不存在")
         pairs = discover_trial_pairs(root)
-        self.assertEqual(len(pairs), 224)
+        self.assertEqual(len(pairs), 213)
         # 被排除的文件不得出现在结果里
         codes = {os.path.basename(sp) for sp, _, _ in pairs}
         self.assertNotIn("LQW03.csv", codes)
         self.assertNotIn("LQW04.csv", codes)
+        for i in range(10, 21):
+            self.assertNotIn(f"ZWJ{i}.csv", codes)
+        # include_invalid（数据诊断口径）恢复全部 226 对
+        all_pairs = discover_trial_pairs(root, include_invalid=True)
+        self.assertEqual(len(all_pairs), 226)
 
 
 class TestRealDataSmoke(unittest.TestCase):

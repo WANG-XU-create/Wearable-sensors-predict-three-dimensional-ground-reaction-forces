@@ -187,7 +187,9 @@ def test_dynamics_diff_degenerate_lengths():
 
 
 def test_invalid_trials_registered():
-    assert INVALID_TRIALS == {("z1", "03"), ("z1", "04")}
+    assert INVALID_TRIALS == {("z1", "03"), ("z1", "04")} | {
+        ("z7", f"{i}") for i in range(10, 21)
+    }
 
 
 def test_feature_dim_matches_modes():
@@ -266,3 +268,82 @@ def test_mirror_perm_unknown_mode_raises():
 
     with pytest.raises(ValueError, match="未知特征模式"):
         mirror_feature_perm("nope")
+
+
+# ---------------- B7 mounting 规整：kinematic_dyn_pca ----------------
+
+
+def _rot(axis, ang):
+    axis = np.asarray(axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * K @ K
+
+
+def test_pca_align_removes_mounting_rotation():
+    from gait_grf.features import _pca_align_blocks
+
+    rng = np.random.default_rng(0)
+    n = 60
+    t = np.linspace(0, 2 * np.pi, n)
+    # 同一物理摆动，两个受试者绑扎相差 40°
+    signal = np.stack([0.3 * np.sin(t), 0.05 * np.sin(2 * t) + 0.03 * np.cos(t),
+                       0.1 * np.sin(3 * t)], axis=1)
+    R_mount = _rot([0.3, 1.0, 0.2], 0.7)
+    a = _pca_align_blocks(signal.copy(), 1)
+    b = _pca_align_blocks(signal @ R_mount.T, 1)
+    # 轴符号由三阶矩约定逐 trial 独立判定：至少应存在一组符号使两者逐位一致
+    from itertools import product
+    ok = any(np.allclose(a, b * np.array(s), atol=1e-8) for s in product([1, -1], repeat=3))
+    assert ok, "PCA 对齐未消除绑扎旋转差异"
+
+
+def test_pca_align_constant_block_identity():
+    from gait_grf.features import _pca_align_blocks
+
+    a = np.tile([[0.1, 0.2, 0.3]], (50, 1))  # 常数块（零方差）
+    out = _pca_align_blocks(a, 1)
+    np.testing.assert_allclose(out, a, atol=1e-12)
+
+
+def test_kinematic_dyn_pca_shape_and_finite():
+    from gait_grf.features import derive_kinematic_features
+
+    quats = {s: axis_angle_quat([0, 0, 1.0], np.linspace(0, 0.5, 80)) for s in _SENSOR_QIDX}
+    df = make_sensor_df(quats)
+    f = derive_kinematic_features(df, mode="kinematic_dyn_pca")
+    assert f.shape == (80, 123)
+    assert len(kinematic_feature_names("kinematic_dyn_pca")) == 123
+    assert feature_dim("kinematic_dyn_pca") == 123
+    assert np.isfinite(f).all()
+
+
+def test_pca_mode_pipeline_smoke():
+    # data 管线端到端：pca 模式与 dyn 模式互不串缓存
+    from gait_grf.data import load_aligned_trial
+    import pandas as pd
+    import tempfile
+    import gait_grf.data as data_mod
+
+    rng = np.random.default_rng(7)
+    n = 130
+    quats = {s: axis_angle_quat([0, 1, 0.0], rng.standard_normal(n) * 0.05) for s in _SENSOR_QIDX}
+    df = make_sensor_df(quats)
+    # 造合法 qualisys 列（6 个力板列齐全；vy = 左压力和保证对齐可用）
+    qual = pd.DataFrame({"time": np.arange(n) / 100.0})
+    for p_ in ("1", "2"):
+        for a_ in ("vx", "vy", "vz"):
+            qual[f"ground_force_{p_}_{a_}"] = 0.0
+    qual["ground_force_1_vy"] = df["left_pressure_sum"].to_numpy()
+    with tempfile.TemporaryDirectory() as d:
+        sp, qp = f"{d}/s.csv", f"{d}/q.csv"
+        df.to_csv(sp, index=False)
+        qual.to_csv(qp, index=False)
+        data_mod._TRIAL_CACHE.clear()
+        f_pca, _ = load_aligned_trial(sp, qp, "z1", feature_mode="kinematic_dyn_pca")
+        data_mod._TRIAL_CACHE.clear()
+        f_dyn, _ = load_aligned_trial(sp, qp, "z1", feature_mode="kinematic_dyn")
+        data_mod._TRIAL_CACHE.clear()
+    assert f_pca.shape == f_dyn.shape == (n, 123)
+    assert not np.allclose(f_pca, f_dyn)  # 旋转确实发生了
+    assert np.isfinite(f_pca).all()

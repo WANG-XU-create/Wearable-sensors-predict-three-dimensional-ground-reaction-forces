@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -236,7 +237,7 @@ class TestTrainerEndToEnd(unittest.TestCase):
         """#6 后置评估：从 checkpoint 重新预测，产出 %BW/辅助指标（无需重训）。"""
         from gait_grf.evaluate import evaluate_run
 
-        rows = evaluate_run(self.out_dir, self.data_root, torch.device("cpu"))
+        rows, trial_rows = evaluate_run(self.out_dir, self.data_root, torch.device("cpu"))
         self.assertEqual(len(rows), 3)
         self.assertEqual({r["test_subject"] for r in rows}, {"z1", "z3", "z6"})
         for row in rows:
@@ -375,7 +376,7 @@ class TestEvaluateKinematicCheckpoint(unittest.TestCase):
     def test_evaluate_rebuilds_model_from_feature_mode(self):
         from gait_grf.evaluate import evaluate_run
 
-        rows = evaluate_run(self.out_dir, self.data_root, torch.device("cpu"))
+        rows, _ = evaluate_run(self.out_dir, self.data_root, torch.device("cpu"))
         self.assertEqual({r["test_subject"] for r in rows}, {"z1", "z3"})
         for row in rows:
             for k, v in row.items():
@@ -386,8 +387,8 @@ class TestEvaluateKinematicCheckpoint(unittest.TestCase):
         from gait_grf.evaluate import evaluate_run
 
         for stitch in ("uniform", "hann", "center"):
-            rows = evaluate_run(self.out_dir, self.data_root,
-                                torch.device("cpu"), stitch=stitch)
+            rows, _ = evaluate_run(self.out_dir, self.data_root,
+                                   torch.device("cpu"), stitch=stitch)
             self.assertEqual(len(rows), 2, stitch)
             for row in rows:
                 for k, v in row.items():
@@ -397,6 +398,220 @@ class TestEvaluateKinematicCheckpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSchedulerAndClip(unittest.TestCase):
+    """③ 号改进项：--lr-scheduler plateau/cosine + --grad-clip（train_one_fold 级）。"""
+
+    def _fit_val(self):
+        """写 z1 fixture 并划分 fit/val；目录用 addCleanup 延迟到测试结束再删。"""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        rng = np.random.default_rng(15)
+        _write_subject_fixture(d, "z1", "LQW", 4, rng,
+                               codes=["01", "02", "05", "06"])
+        pairs = discover_trial_pairs(d, subjects=["z1"])
+        return split_val_trials(pairs, 0.25, np.random.default_rng(0))
+
+    def test_plateau_steps_on_val_loss_each_epoch(self):
+        # 接线验证（确定性）：plateau 每轮以「当轮 val_loss」被 step 一次——
+        # 降 lr 的触发条件本身是 PyTorch 行为，不在本测试范围
+        calls = []
+        orig_step = torch.optim.lr_scheduler.ReduceLROnPlateau.step
+
+        def spy(self_s, metrics):
+            calls.append(float(metrics))
+            return orig_step(self_s, metrics)
+
+        torch.optim.lr_scheduler.ReduceLROnPlateau.step = spy
+        try:
+            fit, val = self._fit_val()
+            cfg = {
+                "model": "ltc", "window": 100, "step": 10, "hidden": 8,
+                "layers": 1, "dropout": 0.0, "epochs": 3, "patience": 0,
+                "batch_size": 8, "lr": 1e-3, "lr_scheduler": "plateau",
+            }
+            _, _, history = train_one_fold(fit, val, cfg, torch.device("cpu"))
+        finally:
+            torch.optim.lr_scheduler.ReduceLROnPlateau.step = orig_step
+        self.assertEqual(len(calls), 3)  # 每轮一次，不漏不多
+        self.assertEqual(calls, [h["val_loss"] for h in history])
+
+    def test_cosine_decays_within_epochs(self):
+        fit, val = self._fit_val()
+        cfg = {
+            "model": "ltc", "window": 100, "step": 10, "hidden": 8,
+            "layers": 1, "dropout": 0.0, "epochs": 4, "patience": 0,
+            "batch_size": 8, "lr": 1e-3, "lr_scheduler": "cosine",
+        }
+        _, _, history = train_one_fold(fit, val, cfg, torch.device("cpu"))
+        lrs = [h["lr"] for h in history]
+        self.assertLess(lrs[-1], lrs[0])
+        # cosine 单调不增
+        self.assertTrue(all(a >= b for a, b in zip(lrs, lrs[1:])))
+
+    def test_none_scheduler_keeps_constant_lr(self):
+        fit, val = self._fit_val()
+        cfg = {
+            "model": "ltc", "window": 100, "step": 10, "hidden": 8,
+            "layers": 1, "dropout": 0.0, "epochs": 2, "patience": 0,
+            "batch_size": 8, "lr": 1e-3, "lr_scheduler": "none",
+            "grad_clip": 1.0,  # 裁剪不影响 lr 轨迹，可与 none 共存
+        }
+        _, _, history = train_one_fold(fit, val, cfg, torch.device("cpu"))
+        self.assertTrue(all(h["lr"] == 1e-3 for h in history))
+
+    def test_unknown_scheduler_raises(self):
+        fit, val = self._fit_val()
+        cfg = {
+            "model": "ltc", "window": 100, "step": 10, "hidden": 8,
+            "layers": 1, "dropout": 0.0, "epochs": 1, "patience": 0,
+            "batch_size": 8, "lr": 1e-3, "lr_scheduler": "bogus",
+        }
+        with self.assertRaises(ValueError):
+            train_one_fold(fit, val, cfg, torch.device("cpu"))
+
+    def test_grad_clip_runs_and_recorded(self):
+        # 端到端：--grad-clip + --lr-scheduler 进 summary config / checkpoint
+        with tempfile.TemporaryDirectory() as d:
+            rng = np.random.default_rng(16)
+            _write_subject_fixture(d, "z1", "LQW", 3, rng,
+                                   codes=["01", "02", "05"])
+            _write_subject_fixture(d, "z3", "HYJ", 3, rng)
+            out_dir = os.path.join(d, "out")
+            proc = subprocess.run(
+                [
+                    sys.executable, "-m", "gait_grf.train",
+                    "--data-root", d, "--out-dir", out_dir,
+                    "--subjects", "z1", "z3",
+                    "--model", "lstm", "--hidden", "8",
+                    "--epochs", "2", "--patience", "0", "--batch-size", "8",
+                    "--device", "cpu",
+                    "--lr-scheduler", "plateau", "--grad-clip", "1.0",
+                    "--plate-zero",
+                ],
+                cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+            with open(os.path.join(out_dir, "summary.json"), encoding="utf-8") as f:
+                summary = json.load(f)
+            self.assertEqual(summary["config"]["lr_scheduler"], "plateau")
+            self.assertEqual(summary["config"]["grad_clip"], 1.0)
+            self.assertIs(summary["config"]["plate_zero"], True)
+            blob = torch.load(os.path.join(out_dir, "model_fold1_z1.pt"),
+                              map_location="cpu", weights_only=False)
+            self.assertEqual(blob["config"]["lr_scheduler"], "plateau")
+            self.assertIs(blob["config"]["plate_zero"], True)
+
+
+class TestPerTrialAndEnsemble(unittest.TestCase):
+    """evaluate --per-trial / --ensemble / --include-invalid 的入口烟测。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls._tmp.name
+        rng = np.random.default_rng(17)
+        _write_subject_fixture(root, "z1", "LQW", 3, rng,
+                               codes=["01", "02", "05"])
+        _write_subject_fixture(root, "z3", "HYJ", 3, rng)
+        cls.data_root = root
+        cls.out_dir = os.path.join(root, "out_s42")
+        cls.out_dir_s43 = os.path.join(root, "out_s43")
+        common = [
+            "--data-root", root,
+            "--subjects", "z1", "z3",
+            "--model", "lstm", "--hidden", "8",
+            "--epochs", "2", "--patience", "0", "--batch-size", "8",
+            "--device", "cpu",
+        ]
+        cls.proc = subprocess.run(
+            [sys.executable, "-m", "gait_grf.train",
+             "--out-dir", cls.out_dir, "--seed", "42"] + common,
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+        )
+        cls.proc_s43 = subprocess.run(
+            [sys.executable, "-m", "gait_grf.train",
+             "--out-dir", cls.out_dir_s43, "--seed", "43"] + common,
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_both_runs_ok(self):
+        self.assertEqual(self.proc.returncode, 0, self.proc.stderr[-2000:])
+        self.assertEqual(self.proc_s43.returncode, 0, self.proc_s43.stderr[-2000:])
+
+    def test_per_trial_rows_and_file(self):
+        from gait_grf.evaluate import evaluate_run
+
+        rows, trial_rows = evaluate_run(
+            self.out_dir, self.data_root, torch.device("cpu"), per_trial=True
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(trial_rows), 6)  # 每折 3 个 trial
+        self.assertEqual(
+            {r["trial"] for r in trial_rows if r["test_subject"] == "z1"},
+            {"LQW01.csv", "LQW02.csv", "LQW05.csv"},
+        )
+        for r in trial_rows:
+            self.assertGreater(r["n_windows"], 0)
+            self.assertTrue(
+                np.isfinite([v for k, v in r.items()
+                             if k not in ("test_subject", "trial")]).all()
+            )
+
+    def test_ensemble_averages_predictions(self):
+        from gait_grf.evaluate import evaluate_run
+
+        single_rows, _ = evaluate_run(
+            self.out_dir, self.data_root, torch.device("cpu")
+        )
+        ens_rows, _ = evaluate_run(
+            self.out_dir, self.data_root, torch.device("cpu"),
+            ensemble_dirs=(self.out_dir_s43,),
+        )
+        self.assertEqual(len(ens_rows), 2)
+        # ensemble 与单模型逐折可比（同折同受试者），指标有限
+        for a, b in zip(single_rows, ens_rows):
+            self.assertEqual(a["test_subject"], b["test_subject"])
+            for k, v in b.items():
+                if k != "test_subject":
+                    self.assertTrue(np.isfinite(v), f"{k} 非有限")
+
+    def test_ensemble_rejects_mismatched_member(self):
+        from gait_grf.evaluate import evaluate_run
+
+        # 篡改成员 checkpoint 的 window 字段 -> 口径不一致必须报错
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("model_fold1_z1.pt", "model_fold2_z3.pt"):
+                blob = torch.load(os.path.join(self.out_dir_s43, name),
+                                  map_location="cpu", weights_only=False)
+                blob["config"]["window"] = 50
+                torch.save(blob, os.path.join(d, name))
+            with self.assertRaises(SystemExit):
+                evaluate_run(
+                    self.out_dir, self.data_root, torch.device("cpu"),
+                    ensemble_dirs=(d,),
+                )
+
+    def test_per_trial_cli_writes_csv(self):
+        from gait_grf.evaluate import main as evaluate_main
+
+        evaluate_main([
+            "--run-dir", self.out_dir, "--data-root", self.data_root,
+            "--device", "cpu", "--per-trial",
+            "--ensemble", self.out_dir_s43,
+        ])
+        for name in ("metrics_per_trial_ens.csv", "metrics_full_ens.csv"):
+            path = os.path.join(self.out_dir, name)
+            self.assertTrue(os.path.isfile(path), f"缺少输出文件 {name}")
+        df = pd.read_csv(os.path.join(self.out_dir, "metrics_per_trial_ens.csv"))
+        self.assertEqual(len(df), 6)
+        self.assertIn("trial", df.columns)
+        self.assertIn("pearson_r_resultant", df.columns)
 
 
 class TestWeightedMse(unittest.TestCase):
@@ -553,7 +768,7 @@ class TestScalerRefitEvaluate(unittest.TestCase):
         self.assertEqual(self.proc.returncode, 0, self.proc.stderr[-2000:])
         from gait_grf.evaluate import evaluate_run
 
-        rows = evaluate_run(
+        rows, _ = evaluate_run(
             self.out_dir, self.data_root, torch.device("cpu"),
             scaler_refit="test",
         )

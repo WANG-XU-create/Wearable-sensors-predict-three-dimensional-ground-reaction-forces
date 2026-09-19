@@ -24,6 +24,7 @@ trial 的读取+对齐结果在进程内缓存（LOSO 各折复用同一批 tria
 import argparse
 import json
 import os
+import warnings
 
 import matplotlib
 
@@ -116,6 +117,7 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
         fit_pairs, window=cfg["window"], step=cfg["step"],
         feature_mode=cfg.get("feature_mode", "raw"),
         mirror_aug=bool(cfg.get("mirror_aug", False)),
+        plate_zero=bool(cfg.get("plate_zero", False)),
     )
     scalers = (fit_ds.feature_scaler, fit_ds.target_scaler)
     X = torch.from_numpy(fit_ds.X)
@@ -133,6 +135,7 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
             feature_scaler=scalers[0],
             target_scaler=scalers[1],
             feature_mode=cfg.get("feature_mode", "raw"),
+            plate_zero=bool(cfg.get("plate_zero", False)),
         )
 
     model = make_model(
@@ -147,6 +150,25 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
         attn_heads=cfg.get("attn_heads", 8),
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
+    # ③ 号改进项（v2 改进清单遗留）：LR scheduler。plateau 适配「早停 + 短训练」
+    # 节奏（cosine 以 epochs 为周期，早停在 ~30/100 轮时退火几乎没发生）；
+    # 需要 val 监控，无 val 时静默退化为恒定 lr。
+    scheduler = None
+    sched_name = cfg.get("lr_scheduler", "none")
+    if sched_name == "plateau":
+        if val_ds is None:
+            warnings.warn("--lr-scheduler plateau 需要验证集，退化为恒定 lr", stacklevel=2)
+        else:
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=0.5, patience=3
+            )
+    elif sched_name == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg["epochs"]
+        )
+    elif sched_name != "none":
+        raise ValueError(f"未知 lr_scheduler {sched_name!r}，可选 none/plateau/cosine")
+    grad_clip = float(cfg.get("grad_clip", 0.0))
     # B6：λ>0 时用幅值加权 MSE（训练与早停判据同一目标），λ=0 保持纯 MSE
     lam = float(cfg.get("peak_weight", 0.0))
     y_scale = None
@@ -173,9 +195,15 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
             loss = loss_fn(pred, y[idx].to(device))
             optimizer.zero_grad()
             loss.backward()
+            if grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
             losses.append(float(loss.item()))
-        entry = {"epoch": epoch, "train_loss": float(np.mean(losses))}
+        entry = {
+            "epoch": epoch,
+            "train_loss": float(np.mean(losses)),
+            "lr": float(optimizer.param_groups[0]["lr"]),
+        }
         if val_ds is not None:
             model.eval()
             val_pred = _batched_forward(
@@ -191,6 +219,11 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
                 entry["val_loss"] = float(
                     np.mean((val_pred - val_ds.y) ** 2)
                 )
+            # scheduler 在本轮 val 判定前 step（plateau 吃 val_loss；cosine 逐轮）
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(entry["val_loss"])
+            elif scheduler is not None:
+                scheduler.step()
             if entry["val_loss"] < best_val:
                 best_val = entry["val_loss"]
                 best_epoch = epoch
@@ -200,6 +233,8 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
             elif cfg["patience"] > 0 and epoch - best_epoch >= cfg["patience"]:
                 history.append(entry)
                 break
+        elif scheduler is not None:  # 无 val（早停也不可用）：cosine 仍逐轮退火
+            scheduler.step()
         history.append(entry)
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -271,6 +306,7 @@ def predict_trial(model, scalers, sensor_path, qualisys_path, subject, cfg, devi
     feats, targets = load_aligned_trial(
         sensor_path, qualisys_path, subject, cfg["refine_radius"],
         cfg.get("feature_mode", "raw"),
+        plate_zero=bool(cfg.get("plate_zero", False)),
     )
     Xw, _ = window_trial(feats, targets, cfg["window"], cfg["step"])
     if len(Xw) == 0:
@@ -493,6 +529,27 @@ def main(argv=None):
              "（训练窗翻倍）；val 不增广。注意：右足弱信号会同步复制到左足",
     )
     parser.add_argument(
+        "--plate-zero",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="力板校零（D2，默认开）：逐 trial 逐足扣除无接触帧（|vy|<10N）的"
+             "vx/vy/vz 中位数零漂。--no-plate-zero 恢复 2026-09-13 前的历史口径",
+    )
+    parser.add_argument(
+        "--lr-scheduler",
+        default="none",
+        choices=["none", "plateau", "cosine"],
+        help="③ 号训练侧改进：plateau=ReduceLROnPlateau(factor 0.5, patience 3，"
+             "按 val_loss 退火，适配早停节奏)；cosine=CosineAnnealingLR(T_max=epochs)。"
+             "默认 none=恒定 lr（历史口径）",
+    )
+    parser.add_argument(
+        "--grad-clip",
+        type=float,
+        default=0.0,
+        help="梯度范数裁剪上限（③ 号改进项；0=不裁剪，历史口径）。LTC 系常取 1.0",
+    )
+    parser.add_argument(
         "--device",
         default="auto",
         choices=["auto", "cuda", "cpu"],
@@ -525,6 +582,9 @@ def main(argv=None):
         "refine_radius": args.refine_radius,
         "peak_weight": args.peak_weight,
         "mirror_aug": args.mirror_aug,
+        "plate_zero": args.plate_zero,
+        "lr_scheduler": args.lr_scheduler,
+        "grad_clip": args.grad_clip,
         "seed": args.seed,
         "rng": np.random.default_rng(args.seed),
     }
