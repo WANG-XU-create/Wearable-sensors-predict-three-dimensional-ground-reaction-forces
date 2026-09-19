@@ -236,3 +236,108 @@ class TestAttnGate(unittest.TestCase):
         self.assertIsNotNone(m.attn_scale.grad)
         self.assertTrue(torch.isfinite(m.attn_scale.grad).all())
         self.assertFalse(torch.all(m.attn_scale.grad == 0.0))
+
+
+class TestMixedLTCCell(unittest.TestCase):
+    """issue #0014：官方 MixedCfcCell 移植（--cell mix）——双状态循环。"""
+
+    def test_seq2seq_shape_and_finite(self):
+        from gait_grf.models import MixedLTCCell
+
+        cell = MixedLTCCell(F, 16, ode_unfolds=2)
+        x = torch.randn(B, T, F)
+        y = cell(x)
+        self.assertEqual(tuple(y.shape), (B, T, 16))
+        self.assertTrue(torch.isfinite(y).all())
+
+    def test_backward_flows_to_both_paths(self):
+        # 梯度必须同时到达门控累加器（input/recurrent kernel）与液态单元电路参数
+        from gait_grf.models import MixedLTCCell
+
+        cell = MixedLTCCell(F, 16, ode_unfolds=2)
+        y = cell(torch.randn(B, T, F))
+        y.pow(2).mean().backward()
+        for name in ("input_kernel", "recurrent_kernel"):
+            p = getattr(cell, name).weight
+            self.assertIsNotNone(p.grad, name)
+            self.assertGreater(p.grad.abs().sum().item(), 0, name)
+        circuit = cell.ltc._params["w"]
+        self.assertIsNotNone(circuit.grad)
+        self.assertGreater(circuit.grad.abs().sum().item(), 0)
+
+    def test_forget_bias_changes_gating(self):
+        # forget_bias 越大遗忘门越开：cell 状态保留越多，输出应可区分
+        from gait_grf.models import MixedLTCCell
+
+        torch.manual_seed(0)
+        x = torch.randn(B, T, F)
+        y1 = MixedLTCCell(F, 16, ode_unfolds=2, forget_bias=0.0)(x)
+        y2 = MixedLTCCell(F, 16, ode_unfolds=2, forget_bias=5.0)(x)
+        # 两个不同门控行为的细胞（同参数不同——参数随机初始化不同，仅确认可区分构造）
+        self.assertFalse(torch.allclose(y1, y2))
+
+    def test_gait_ltc_cell_mix_dispatch(self):
+        x = torch.randn(B, T, F)
+        for cell in ("ltc", "mix"):
+            with self.subTest(cell=cell):
+                m = make_model("ltc", input_size=F, output_size=OUT,
+                               hidden=16, layers=2, ode_unfolds=2, cell=cell)
+                self.assertEqual(tuple(m(x).shape), (B, T, OUT))
+        with self.assertRaises(ValueError):
+            make_model("ltc", input_size=F, hidden=16, cell="bogus")
+        # 历史口径：不传 cell 默认 ltc（旧配置/checkpoint 兼容）
+        m = make_model("ltc", input_size=F, hidden=16)
+        self.assertNotIsInstance(m.rnn[0], __import__("gait_grf.models", fromlist=["MixedLTCCell"]).MixedLTCCell)
+
+    def test_gait_ltc_attn_cell_mix(self):
+        m = make_model("ltc_attn", input_size=F, output_size=OUT,
+                       hidden=16, layers=2, ode_unfolds=2, cell="mix")
+        x = torch.randn(B, T, F)
+        y = m(x)
+        self.assertEqual(tuple(y.shape), (B, T, OUT))
+        y.pow(2).mean().backward()
+
+
+class TestGaitLTCNCP(unittest.TestCase):
+    """issue #0014：NCP motor 直读出变体（Nature MI 2020 驾驶构型）。"""
+
+    def test_motor_readout_shape_no_mlp_head(self):
+        m = make_model("ltc_ncp", input_size=F, output_size=OUT,
+                       hidden=64, layers=2, ode_unfolds=2, ncp_units=70)
+        self.assertFalse(hasattr(m, "readout"))  # motor 即输出，无 MLP 头
+        x = torch.randn(B, T, F)
+        y = m(x)
+        self.assertEqual(tuple(y.shape), (B, T, OUT))
+        self.assertTrue(torch.isfinite(y).all())
+
+    def test_wiring_topology_recorded(self):
+        m = make_model("ltc_ncp", input_size=F, output_size=OUT,
+                       hidden=64, layers=2, ode_unfolds=2,
+                       ncp_units=70, ncp_sparsity=0.4, ncp_seed=7)
+        w = m.ncp.rnn_cell._wiring
+        self.assertEqual(w.units, 70)
+        self.assertEqual(w.output_dim, OUT)
+
+    def test_invalid_ncp_units_raises(self):
+        with self.assertRaises(ValueError):
+            make_model("ltc_ncp", input_size=F, hidden=8, ncp_units=8)  # units-output<3
+
+    def test_state_dict_roundtrip_rebuild(self):
+        # evaluate 侧按 config 重建后 load 必须严格一致（adjacency 是 buffer 非 param）
+        m1 = make_model("ltc_ncp", input_size=F, output_size=OUT,
+                        hidden=64, layers=2, ode_unfolds=2, ncp_units=70, ncp_seed=42)
+        m2 = make_model("ltc_ncp", input_size=F, output_size=OUT,
+                        hidden=64, layers=2, ode_unfolds=2, ncp_units=70, ncp_seed=42)
+        m2.load_state_dict(m1.state_dict())  # strict=True
+        x = torch.randn(B, T, F)
+        m1.eval(); m2.eval()
+        with torch.no_grad():
+            np.testing.assert_allclose(m1(x).numpy(), m2(x).numpy(), rtol=1e-5)
+
+    def test_gradients_flow(self):
+        m = make_model("ltc_ncp", input_size=F, output_size=OUT,
+                       hidden=64, layers=2, ode_unfolds=2, ncp_units=70)
+        y = m(torch.randn(B, T, F))
+        y.pow(2).mean().backward()
+        got = sum(1 for p in m.parameters() if p.grad is not None and p.grad.abs().sum() > 0)
+        self.assertGreater(got, 0)

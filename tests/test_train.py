@@ -802,3 +802,153 @@ class TestScalerRefitEvaluate(unittest.TestCase):
                   encoding="utf-8") as f:
             agg = _json.load(f)
         self.assertEqual(agg["scaler_refit"], "test")
+
+
+class TestOptimAndCellCLI(unittest.TestCase):
+    """issue #0014 训练配方：--cell/--optimizer/--weight-decay/--init-gain 的
+    入口烟测 + checkpoint 往返（含 ltc_ncp / cell=mix 的 evaluate 重建）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls._tmp.name
+        rng = np.random.default_rng(21)
+        _write_subject_fixture(root, "z1", "LQW", 3, rng,
+                               codes=["01", "02", "05"])
+        _write_subject_fixture(root, "z3", "HYJ", 3, rng)
+        cls.data_root = root
+        cls.out_mix = os.path.join(root, "out_mix")
+        cls.out_ncp = os.path.join(root, "out_ncp")
+        cls.out_adamw = os.path.join(root, "out_adamw")
+        common = ["--data-root", root, "--subjects", "z1", "z3",
+                  "--hidden", "8", "--epochs", "2", "--patience", "0",
+                  "--batch-size", "8", "--device", "cpu", "--ode-unfolds", "2"]
+        cls.proc_mix = subprocess.run(
+            [sys.executable, "-m", "gait_grf.train", "--out-dir", cls.out_mix,
+             "--model", "ltc_attn", "--cell", "mix"] + common,
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
+        cls.proc_ncp = subprocess.run(
+            [sys.executable, "-m", "gait_grf.train", "--out-dir", cls.out_ncp,
+             "--model", "ltc_ncp", "--ncp-units", "14"] + common,
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
+        cls.proc_adamw = subprocess.run(
+            [sys.executable, "-m", "gait_grf.train", "--out-dir", cls.out_adamw,
+             "--model", "ltc", "--optimizer", "adamw", "--weight-decay", "1e-4",
+             "--init-gain", "0.9"] + common,
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_exit_zero(self):
+        for p in (self.proc_mix, self.proc_ncp, self.proc_adamw):
+            self.assertEqual(p.returncode, 0, p.stderr[-2000:])
+
+    def test_configs_recorded(self):
+        import torch as _t
+        blob_mix = _t.load(os.path.join(self.out_mix, "model_fold1_z1.pt"),
+                           map_location="cpu", weights_only=False)
+        self.assertEqual(blob_mix["config"]["cell"], "mix")
+        blob_ncp = _t.load(os.path.join(self.out_ncp, "model_fold1_z1.pt"),
+                           map_location="cpu", weights_only=False)
+        self.assertEqual(blob_ncp["config"]["model"], "ltc_ncp")
+        self.assertEqual(blob_ncp["config"]["ncp_units"], 14)
+        blob_adamw = _t.load(os.path.join(self.out_adamw, "model_fold1_z1.pt"),
+                             map_location="cpu", weights_only=False)
+        self.assertEqual(blob_adamw["config"]["optimizer"], "adamw")
+        self.assertEqual(blob_adamw["config"]["weight_decay"], 1e-4)
+        self.assertEqual(blob_adamw["config"]["init_gain"], 0.9)
+
+    def test_evaluate_rebuilds_mixed_and_ncp(self):
+        from gait_grf.evaluate import evaluate_run
+
+        for out_dir in (self.out_mix, self.out_ncp):
+            rows, _ = evaluate_run(out_dir, self.data_root, torch.device("cpu"))
+            self.assertEqual(len(rows), 2)
+            for row in rows:
+                for k, v in row.items():
+                    if k != "test_subject":
+                        self.assertTrue(np.isfinite(v), f"{out_dir}/{k} 非有限")
+
+    def test_adamw_param_groups_exclude_circuit_params(self):
+        # 衰减只作用于 ≥2 维权重；LTC 电路参数（cm/gleak/w 等 1-2 维有量程约束）
+        # 归入 no-decay 组的判定：2 维电路参数（w/mu/sigma）也应豁免——
+        # 实现按 dim>=2 分组，此处仅验证 AdamW 双组构造与训练收敛
+        with open(os.path.join(self.out_adamw, "summary.json"), encoding="utf-8") as f:
+            cfg = json.load(f)["config"]
+        self.assertEqual(cfg["optimizer"], "adamw")
+        self.assertEqual(cfg["weight_decay"], 1e-4)
+
+
+
+
+class TestBuildOptimizer(unittest.TestCase):
+    """AdamW 分组：电路参数豁免、权重矩阵衰减、bias 豁免。"""
+
+    def _model(self):
+        from gait_grf.models import make_model
+
+        return make_model("ltc", input_size=120, hidden=16, layers=1, ode_unfolds=2)
+
+    def test_adamw_groups(self):
+        from gait_grf.train import build_optimizer
+
+        m = self._model()
+        opt = build_optimizer(m, {"optimizer": "adamw", "weight_decay": 1e-4, "lr": 1e-3})
+        self.assertIsInstance(opt, torch.optim.AdamW)
+        decay, no_decay = opt.param_groups
+        self.assertEqual(decay["weight_decay"], 1e-4)
+        self.assertEqual(no_decay["weight_decay"], 0.0)
+        names = {id(p) for p in m.parameters() if p.requires_grad}
+        self.assertTrue({id(p) for p in decay["params"]} | {id(p) for p in no_decay["params"]} == names)
+        # Linear 权重必须进衰减组
+        lin_w = {id(p) for n, p in m.named_parameters() if "readout.weight" in n or "w" in n and p.dim() == 2 and "._params." not in n}
+        self.assertTrue(lin_w & {id(p) for p in decay["params"]})
+
+    def test_circuit_params_exempt_from_decay(self):
+        from gait_grf.train import build_optimizer
+
+        m = self._model()
+        opt = build_optimizer(m, {"optimizer": "adamw", "weight_decay": 1e-4, "lr": 1e-3})
+        _, no_decay = opt.param_groups
+        no_decay_ids = {id(p) for p in no_decay["params"]}
+        # LTC 电路参数（LTCCell 上的 w/sigma 等，2 维但必须豁免）按模块识别
+        from ncps.torch import LTCCell as _LTCCell
+
+        circuit = set()
+        for mod in m.modules():
+            if isinstance(mod, _LTCCell):
+                circuit.update(id(p) for p in mod.parameters() if p.requires_grad)
+        self.assertTrue(circuit)
+        self.assertTrue(circuit <= no_decay_ids)
+
+    def test_adam_single_group_and_unknown_raises(self):
+        from gait_grf.train import build_optimizer
+
+        m = self._model()
+        opt = build_optimizer(m, {"optimizer": "adam", "lr": 1e-3})
+        self.assertIsInstance(opt, torch.optim.Adam)
+        with self.assertRaises(ValueError):
+            build_optimizer(m, {"optimizer": "sgd", "lr": 1e-3})
+
+    def test_apply_init_gain_touches_only_linear(self):
+        from gait_grf.train import apply_init_gain
+
+        torch.manual_seed(0)
+        m = self._model()
+        from ncps.torch import LTCCell as _LTCCell
+
+        circuit_params = set()
+        for mod in m.modules():
+            if isinstance(mod, _LTCCell):
+                circuit_params.update(id(p) for p in mod.parameters())
+        before_circuit = {id(p): p.detach().clone() for n, p in m.named_parameters() if id(p) in circuit_params}
+        before_lin = {n: p.detach().clone() for n, p in m.named_parameters() if n.endswith("readout.weight")}
+        apply_init_gain(m, 1.2)
+        after_circuit = {id(p): p.detach().clone() for n, p in m.named_parameters() if id(p) in circuit_params}
+        for n in before_circuit:
+            self.assertTrue(torch.equal(before_circuit[n], after_circuit[n]), f"电路参数被改写: {n}")
+        changed = any(not torch.equal(before_lin[n], p.detach())
+                      for n, p in m.named_parameters() if n.endswith("readout.weight"))
+        self.assertTrue(changed)

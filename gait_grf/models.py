@@ -1,14 +1,62 @@
 """序列模型：LTC 主模型 + LSTM/TCN 基线（ticket #5）+ CfC 提速变体（v2 §3.3 / C12）
-+ LTCAttn 混合架构（借鉴 main.py 原型，issue #0011）。
++ LTCAttn 混合架构（借鉴 main.py 原型，issue #0011）
++ GitHub LNN 项目架构移植批次（issue #0014，2026-09-19 研究结论）：
+  - MixedLTC 混合细胞（raminmh/CfC 官方旗舰模式 = drone_causality 默认细胞）：
+    门控累加器与液态单元的双状态循环；
+  - ltc_ncp（NCP motor 直读出，Nature MI 2020 驾驶 / drone_causality 一等候选）；
+  - AdamW/weight-decay/init-gain 训练配方（官方两仓一致，train.py 侧）。
 
 统一 seq2seq 回归接口：输入 (B, T, input_size) -> 输出 (B, T, output_size)，
-共享训练/评估管线，仅 --model 切换。
+共享训练/评估管线，仅 --model/--cell 切换。
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from ncps.torch import LTC, CfC
+from ncps.torch import LTC, CfC, LTCCell
+from ncps.wirings import AutoNCP, FullyConnected
+
+
+class MixedLTCCell(nn.Module):
+    """官方 MixedCfcCell 的 torch + LTC 移植（raminmh/CfC train_* 的 use_mixed=True、
+    drone_causality 默认细胞，issue #0014）。
+
+    双状态循环（逐时间步）：
+      1) 门控累加器：z = x·Win + h_ode·Wrec + b，new_cell = cell·σ(fg+forget_bias)
+         + tanh(i)·σ(ig)。关键接缝：循环矩阵吃的是液态隐状态 h_ode（不是累加器
+         自身隐状态），即液态动力学直接调制门控行为；
+      2) ode_input = tanh(new_cell)·σ(og)：累加器的门控输出作为液态单元的输入；
+      3) 液态单元：ode_out, h_ode' = LTCCell(ode_input, h_ode)（ncps 全连接 wiring，
+         语义等价 int units 的稠密 LTC）。
+    输出序列取每步 ode_out（FC wiring 下 = 液态全状态）。
+    """
+
+    def __init__(self, input_size, hidden, ode_unfolds=2, forget_bias=1.0):
+        super().__init__()
+        # 液态单元的输入是累加器的门控输出（hidden 维），原始输入经 input_kernel 进入
+        # 门控累加器——与官方 MixedCfcCell 一致（cfc = CfcCell(units)）
+        wiring = FullyConnected(hidden)
+        wiring.build(hidden)
+        self.ltc = LTCCell(wiring, ode_unfolds=ode_unfolds)
+        self.input_kernel = nn.Linear(input_size, 4 * hidden)
+        self.recurrent_kernel = nn.Linear(hidden, 4 * hidden, bias=False)
+        self.hidden = hidden
+        self.forget_bias = forget_bias
+
+    def forward(self, x):
+        # (B, T, F) -> (B, T, hidden)；官方语义 elapsed=1（均匀采样）
+        B, T, _ = x.shape
+        h = x.new_zeros(B, self.hidden)
+        c = x.new_zeros(B, self.hidden)
+        outs = []
+        for t in range(T):
+            z = self.input_kernel(x[:, t]) + self.recurrent_kernel(h)
+            i, ig, fg, og = z.chunk(4, dim=-1)
+            c = c * torch.sigmoid(fg + self.forget_bias) + torch.tanh(i) * torch.sigmoid(ig)
+            ode_in = torch.tanh(c) * torch.sigmoid(og)
+            ode_out, h = self.ltc(ode_in, h, 1.0)
+            outs.append(ode_out)
+        return torch.stack(outs, dim=1)
 
 
 class GaitLTC(nn.Module):
@@ -19,24 +67,34 @@ class GaitLTC(nn.Module):
     ode_unfolds 为半隐式 ODE 解算器的内层展开步数（库默认 6）；C12 提速
     （v2 §3.3）：降低该值减少每时间步的迭代开销，精度需 sweep 验证。
     该参数只影响前向计算图展开次数，不引入参数，checkpoint 兼容。
+    cell="mix" 时各层换为 MixedLTCCell（官方混合细胞，issue #0014）。
     """
 
     def __init__(self, input_size, output_size=6, hidden=32, layers=1, dropout=0.0,
-                 ode_unfolds=6):
+                 ode_unfolds=6, cell="ltc"):
         super().__init__()
         if layers < 1:
             raise ValueError(f"layers 必须 >= 1，得到 {layers}")
-        self.rnn = nn.ModuleList(
-            [LTC(input_size if i == 0 else hidden, units=hidden, batch_first=True,
-                 ode_unfolds=ode_unfolds)
-             for i in range(layers)]
-        )
+        if cell not in ("ltc", "mix"):
+            raise ValueError(f"未知 cell {cell!r}，可选 ltc/mix")
+        if cell == "mix":
+            self.rnn = nn.ModuleList(
+                [MixedLTCCell(input_size if i == 0 else hidden, hidden,
+                              ode_unfolds=ode_unfolds)
+                 for i in range(layers)]
+            )
+        else:
+            self.rnn = nn.ModuleList(
+                [LTC(input_size if i == 0 else hidden, units=hidden, batch_first=True,
+                     ode_unfolds=ode_unfolds)
+                 for i in range(layers)]
+            )
         self.dropout = nn.Dropout(dropout)
         self.readout = nn.Linear(hidden, output_size)
 
     def forward(self, x):
         for rnn in self.rnn:
-            out, _ = rnn(x)
+            out = rnn(x) if isinstance(rnn, MixedLTCCell) else rnn(x)[0]
             x = self.dropout(out)
         return self.readout(x)
 
@@ -218,6 +276,47 @@ class RelPosSelfAttention(nn.Module):
         return self.out_proj(out)
 
 
+class GaitLTCNCP(nn.Module):
+    """NCP motor 直读出变体（issue #0014，Nature MI 2020 驾驶 / drone_causality 构型）。
+
+    稠密 LTC 层（int units）堆叠后，末层换成 NCP wiring 的 LTC：sensory -> inter
+    -> command -> motor 的稀疏拓扑，motor 神经元数 = output_size，**motor 状态即
+    输出**（无 MLP 头）——「可审计」的 NCP 构型。循环矩阵尺寸 inter+command =
+    ncp_units - output_size ≈ hidden，计算成本与稠密方案中性。
+    wiring 拓扑随 config（ncp_units/sparsity/seed）保存，checkpoint 重建一致。
+    """
+
+    def __init__(self, input_size, output_size=6, hidden=32, layers=1, dropout=0.0,
+                 ode_unfolds=6, ncp_units=None, ncp_sparsity=0.5, ncp_seed=22222):
+        super().__init__()
+        if layers < 1:
+            raise ValueError(f"layers 必须 >= 1，得到 {layers}")
+        ncp_units = ncp_units if ncp_units is not None else hidden + output_size
+        if ncp_units - output_size < 3:
+            raise ValueError(
+                f"ncp_units {ncp_units} - output_size {output_size} < 3："
+                f"NCP 需要至少 1 inter + 2 command 神经元"
+            )
+        self.rnn = nn.ModuleList(
+            [LTC(input_size if i == 0 else hidden, units=hidden, batch_first=True,
+                 ode_unfolds=ode_unfolds)
+             for i in range(layers - 1)]
+        )
+        wiring = AutoNCP(ncp_units, output_size, sparsity_level=ncp_sparsity,
+                         seed=ncp_seed)
+        self.ncp = LTC(hidden if layers > 1 else input_size, wiring,
+                       batch_first=True, ode_unfolds=ode_unfolds)
+        self.dropout = nn.Dropout(dropout)
+        self.output_size = output_size
+
+    def forward(self, x):
+        for rnn in self.rnn:
+            out, _ = rnn(x)
+            x = self.dropout(out)
+        out, _ = self.ncp(x)
+        return out  # motor 状态即输出 (B, T, output_size)
+
+
 class GaitLTCAttn(nn.Module):
     """LTC + 多尺度因果卷积前端 + 双向自注意力 + ReZero 门控（借鉴 main.py，issue #0011）。
 
@@ -229,15 +328,23 @@ class GaitLTCAttn(nn.Module):
     """
 
     def __init__(self, input_size, output_size=6, hidden=32, layers=1, dropout=0.0,
-                 ode_unfolds=6, attn_heads=8, max_len=100):
+                 ode_unfolds=6, attn_heads=8, max_len=100, cell="ltc"):
         super().__init__()
         if layers < 1:
             raise ValueError(f"layers 必须 >= 1，得到 {layers}")
+        if cell not in ("ltc", "mix"):
+            raise ValueError(f"未知 cell {cell!r}，可选 ltc/mix")
         self.input_proj = CausalMultiScaleProj(input_size, hidden)
-        self.rnn = nn.ModuleList(
-            [LTC(hidden, units=hidden, batch_first=True, ode_unfolds=ode_unfolds)
-             for _ in range(layers)]
-        )
+        if cell == "mix":
+            self.rnn = nn.ModuleList(
+                [MixedLTCCell(hidden, hidden, ode_unfolds=ode_unfolds)
+                 for _ in range(layers)]
+            )
+        else:
+            self.rnn = nn.ModuleList(
+                [LTC(hidden, units=hidden, batch_first=True, ode_unfolds=ode_unfolds)
+                 for _ in range(layers)]
+            )
         self.norms = nn.ModuleList([nn.LayerNorm(hidden) for _ in range(layers)])
         self.dropout = nn.Dropout(dropout)
         self.self_attn = RelPosSelfAttention(hidden, num_heads=attn_heads,
@@ -258,7 +365,7 @@ class GaitLTCAttn(nn.Module):
         feat = self.input_proj(x)  # 快路径（局部多尺度特征），跳连复用
         h = feat
         for i, rnn in enumerate(self.rnn):
-            out, _ = rnn(h)
+            out = rnn(h) if isinstance(rnn, MixedLTCCell) else rnn(h)[0]
             # 第 0 层输入无同维残差（卷积投影非 hidden 语义），深层做序列级残差
             h = self.norms[i](out if i == 0 else out + h)
             h = self.dropout(h)
@@ -267,21 +374,27 @@ class GaitLTCAttn(nn.Module):
         return self.head(h)
 
 
-MODELS = {"ltc": GaitLTC, "ltc_attn": GaitLTCAttn, "cfc": GaitCfC, "lstm": GaitLSTM,
-          "tcn": GaitTCN}
+MODELS = {"ltc": GaitLTC, "ltc_attn": GaitLTCAttn, "ltc_ncp": GaitLTCNCP,
+          "cfc": GaitCfC, "lstm": GaitLSTM, "tcn": GaitTCN}
 
 
 def make_model(name, input_size, output_size=6, hidden=32, layers=1, dropout=0.0, kernel=5,
-               ode_unfolds=6, attn_heads=8):
-    """按名字构造模型；kernel 仅 TCN 使用，ode_unfolds 仅 LTC 系使用，attn_heads 仅 ltc_attn。"""
+               ode_unfolds=6, attn_heads=8, cell="ltc", ncp_units=None,
+               ncp_sparsity=0.5, ncp_seed=22222):
+    """按名字构造模型；kernel 仅 TCN 使用，ode_unfolds 仅 LTC 系使用，attn_heads
+    仅 ltc_attn，cell 仅 ltc/ltc_attn（ltc=稠密 / mix=官方混合细胞），ncp_* 仅 ltc_ncp。"""
     if name not in MODELS:
         raise ValueError(f"未知模型 {name!r}，可选：{sorted(MODELS)}")
     if name == "tcn":
         return GaitTCN(input_size, output_size, hidden, layers, dropout, kernel=kernel)
     if name == "ltc":
         return GaitLTC(input_size, output_size, hidden, layers, dropout,
-                       ode_unfolds=ode_unfolds)
+                       ode_unfolds=ode_unfolds, cell=cell)
+    if name == "ltc_ncp":
+        return GaitLTCNCP(input_size, output_size, hidden, layers, dropout,
+                          ode_unfolds=ode_unfolds, ncp_units=ncp_units,
+                          ncp_sparsity=ncp_sparsity, ncp_seed=ncp_seed)
     if name == "ltc_attn":
         return GaitLTCAttn(input_size, output_size, hidden, layers, dropout,
-                           ode_unfolds=ode_unfolds, attn_heads=attn_heads)
+                           ode_unfolds=ode_unfolds, attn_heads=attn_heads, cell=cell)
     return MODELS[name](input_size, output_size, hidden, layers, dropout)

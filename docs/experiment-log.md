@@ -507,6 +507,13 @@ z7：0.801 → 0.762（−0.039）；峰值误差 vy L 19.23→20.62、R 18.36�
 
 ## 数据备忘
 
+### 2026-09-19 GitHub LNN 架构移植批次（issue #0014）：MixedLTC 细胞 + NCP 直读出 + 官方训练配方
+
+- **研究**（克隆精读 raminmh/CfC 官方 1055★、makramchahine/drone_causality 93★、mlech26l/ordinary_neural_circuits 42★，副本在 /root/lnn_research/）：提炼出三个本项目缺失的可迁移模式——① 官方 CfC 旗舰 **mixed 模式**（门控累加器↔液态单元双状态循环：LSTM 循环矩阵吃液态隐状态、累加器门控输出驱动液态单元；drone 仓的默认细胞，HAR 基准获胜配置）；② **NCP motor 直读出**（末层 AutoNCP(units,6) 稀疏拓扑、无 MLP 头，Nature MI 2020 驾驶构型，drone 一等候选；与 2026-09-05 否定的「AutoNCP 提速」不冲突——当时只否定 FLOP 节省，motor 直读出成本中性且表征价值未测）；③ **官方训练配方**：AdamW + weight decay（4e-5~2e-4，drone 1e-6）+ xavier init gain（0.67–1.35）+ clipnorm（已由 ③ 号批次落地）。
+- **实现**（models.py/train.py/evaluate.py，测试 123 全绿 +18）：`MixedLTCCell`（`--cell mix` 用于 ltc/ltc_attn，逐时间步双状态循环，ncps FC wiring 承载液态单元）；`GaitLTCNCP`（`--model ltc_ncp --ncp-units/--ncp-sparsity`，motor 即 6 维输出无 MLP 头，wiring 拓扑随 config 保存）；`build_optimizer`（AdamW 分组：衰减仅 ≥2 维 Linear/Conv 权重，**LTCCell/CfCCell 电路参数全豁免**——量程约束会被衰减破坏）+ `apply_init_gain`（仅 Linear）。evaluate 按 checkpoint config 重建新模型，ensemble 口径校验扩到 cell/ncp 字段。
+- **不采纳**：irregular timespans/mask（本项目均匀采样无缺失）、ONC 脉冲电路（控制域）、NCP 中间层（AutoNCP(2H,H) 的稀疏 mask 在 ncps torch 里是稠密逐元素乘，状态×4 成本恶性）。
+- **实验阶梯**（新口径 213-trial + plate_zero，对照组 = EXP-012 新口径基线）：EXP-013 `ltc_attn --cell mix`（优先）> EXP-016 `--optimizer adamw --weight-decay 1e-4 --init-gain 0.84`（可 TCN 快扫）> EXP-015 `ltc_ncp` > EXP-014 `ltc --cell mix`。
+
 ### 2026-09-13 数据层诊断批次：z7 鞋垫故障（D1）+ 力板零漂（D2），数据集 224→213
 
 - **背景**：z7 折连续 6 轮实验离群（r 0.68–0.80，其余折 0.94–0.98），数据层排查（v2 改进清单遗留项）与右足 vx 排查一次做完。全部为无标签分析（只读传感器/测力台原始数据）。

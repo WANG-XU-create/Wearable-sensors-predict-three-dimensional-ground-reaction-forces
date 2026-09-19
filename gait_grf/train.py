@@ -34,6 +34,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
+from ncps.torch import CfCCell, LTCCell
 
 from .constants import (
     DEFAULT_REFINE_RADIUS,
@@ -107,6 +109,51 @@ def weighted_mse(pred, target, lam, y_scale):
     return (w * (pred - target) ** 2).mean()
 
 
+def build_optimizer(model, cfg):
+    """按 cfg 构造优化器（issue #0014 训练配方）。
+
+    adam=历史口径（全体参数统一 Adam）。adamw=官方 CfC/drone 配方：weight decay
+    只作用于 ≥2 维的常规权重矩阵（Linear/Conv）；ncps 电路参数（LTCCell/CfCCell
+    的 gleak/cm/w/sigma 等，有正性量程约束，衰减会破坏电路语义）与 bias/门控
+    标量全部豁免。
+    """
+    weight_decay = float(cfg.get("weight_decay", 0.0))
+    opt_name = cfg.get("optimizer", "adam")
+    if opt_name == "adamw":
+        circuit_ids = set()
+        for m in model.modules():
+            if isinstance(m, (LTCCell, CfCCell)):
+                circuit_ids.update(id(p) for p in m.parameters())
+        decay = [
+            p for n, p in model.named_parameters()
+            if p.requires_grad and p.dim() >= 2 and id(p) not in circuit_ids
+        ]
+        no_decay = [
+            p for n, p in model.named_parameters()
+            if p.requires_grad and (p.dim() < 2 or id(p) in circuit_ids)
+        ]
+        return torch.optim.AdamW(
+            [
+                {"params": decay, "weight_decay": weight_decay},
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
+            lr=cfg["lr"],
+        )
+    if opt_name == "adam":
+        return torch.optim.Adam(model.parameters(), lr=cfg["lr"])
+    raise ValueError(f"未知 optimizer {opt_name!r}，可选 adam/adamw")
+
+
+def apply_init_gain(model, gain):
+    """官方 CfC 配方的初始化增益：只重初始化 Linear 权重。
+
+    LTC 电路参数（有量程约束）与 Conv1d（多尺度前端有自己的初始化语义）不碰。
+    """
+    for m in model.modules():
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight, gain=float(gain))
+
+
 def train_one_fold(fit_pairs, val_pairs, cfg, device):
     """训练一折：fit trial 上拟合 scaler 并训练，val trial 上监控损失。
 
@@ -148,8 +195,15 @@ def train_one_fold(fit_pairs, val_pairs, cfg, device):
         kernel=cfg.get("kernel", 5),
         ode_unfolds=cfg.get("ode_unfolds", 6),
         attn_heads=cfg.get("attn_heads", 8),
+        cell=cfg.get("cell", "ltc"),
+        ncp_units=cfg.get("ncp_units"),
+        ncp_sparsity=cfg.get("ncp_sparsity", 0.5),
+        ncp_seed=cfg.get("ncp_seed", 22222),
     ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
+    init_gain = float(cfg.get("init_gain", 0.0))
+    if init_gain > 0:
+        apply_init_gain(model, init_gain)
+    optimizer = build_optimizer(model, cfg)
     # ③ 号改进项（v2 改进清单遗留）：LR scheduler。plateau 适配「早停 + 短训练」
     # 节奏（cosine 以 epochs 为周期，早停在 ~30/100 轮时退火几乎没发生）；
     # 需要 val 监控，无 val 时静默退化为恒定 lr。
@@ -466,9 +520,10 @@ def main(argv=None):
     parser.add_argument(
         "--model",
         default="ltc",
-        choices=["ltc", "ltc_attn", "cfc", "lstm", "tcn"],
+        choices=["ltc", "ltc_attn", "ltc_ncp", "cfc", "lstm", "tcn"],
         help="模型选择：LTC 主模型 / LTC+卷积前端+双向注意力混合（issue #0011）/"
-             "LSTM、TCN 基线（ticket #5）/ CfC 闭式提速变体（C12，v2 §3.3）",
+             "LTC+NCP motor 直读出（issue #0014）/ LSTM、TCN 基线（ticket #5）/"
+             "CfC 闭式提速变体（C12，v2 §3.3）",
     )
     parser.add_argument(
         "--features",
@@ -498,6 +553,48 @@ def main(argv=None):
         type=int,
         default=8,
         help="ltc_attn 混合架构的自注意力头数（仅 --model ltc_attn 使用）",
+    )
+    parser.add_argument(
+        "--cell",
+        default="ltc",
+        choices=["ltc", "mix"],
+        help="液态细胞类型（仅 --model ltc/ltc_attn）：ltc=ncps 稠密 LTC（历史口径）；"
+        "mix=官方 MixedCfcCell 移植（raminmh/CfC 旗舰模式 / drone_causality 默认细胞，"
+        "issue #0014）——门控累加器与液态单元双状态循环",
+    )
+    parser.add_argument(
+        "--ncp-units",
+        type=int,
+        default=None,
+        help="NCP 总神经元数（仅 --model ltc_ncp；默认 hidden+output_size，即 "
+        "inter+command ≈ hidden，计算成本中性）。wiring 拓扑随 checkpoint 保存",
+    )
+    parser.add_argument(
+        "--ncp-sparsity",
+        type=float,
+        default=0.5,
+        help="NCP 稀疏度（仅 --model ltc_ncp，ncps AutoNCP 参数）",
+    )
+    parser.add_argument(
+        "--optimizer",
+        default="adam",
+        choices=["adam", "adamw"],
+        help="优化器：adam=历史口径；adamw=官方 CfC/drone 配方（配合 --weight-decay，"
+        "衰减只作用于 ≥2 维权重矩阵，LTC 电路参数与 bias 不衰减）",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="AdamW 权重衰减（官方 HAR 配方 4e-5~2e-4，drone 配方 1e-6；"
+        "仅 --optimizer adamw 生效）",
+    )
+    parser.add_argument(
+        "--init-gain",
+        type=float,
+        default=0.0,
+        help="Linear 权重 xavier_uniform 初始化增益（官方配方 0.67–1.35；"
+        "0=保持默认初始化。LTC 电路参数与 Conv1d 不受影响）",
     )
     parser.add_argument("--epochs", type=int, default=5, help="最大训练轮数")
     parser.add_argument(
@@ -572,6 +669,12 @@ def main(argv=None):
         "kernel": args.kernel,
         "ode_unfolds": args.ode_unfolds,
         "attn_heads": args.attn_heads,
+        "cell": args.cell,
+        "ncp_units": args.ncp_units,
+        "ncp_sparsity": args.ncp_sparsity,
+        "optimizer": args.optimizer,
+        "weight_decay": args.weight_decay,
+        "init_gain": args.init_gain,
         "epochs": args.epochs,
         "patience": args.patience,
         "batch_size": args.batch_size,
