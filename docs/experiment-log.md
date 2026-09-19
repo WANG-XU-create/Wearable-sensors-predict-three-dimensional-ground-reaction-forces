@@ -503,6 +503,57 @@ z7：0.801 → 0.762（−0.039）；峰值误差 vy L 19.23→20.62、R 18.36�
 4. **净结论：`ltc_attn`（门控版）+ kinematic_dyn + ou=2 + pw1 = 新默认配方**，LTC 线在本项目的最优模型。三层增益来源可分解：卷积多尺度前端（EXP-010 的 R_vx 突破主因）+ 门控注意力（正常折 +0.015~0.02 的全局上下文）+ ReZero 纪律（不伤域偏移折与峰值）。
 5. 后续候选：① 3 种子重复（v2 §4-B9 论文显著性口径，现 p=0.078）；② λ=2 sweep；③ C10 因果版注意力（部署口径，预期小幅回吐）；④ 数据层 R_vx/z7 排查（模型侧已挖到 0.774，剩余差距收敛到数据问题）。
 
+## EXP-013 MixedLTC 细胞进完整配方（issue #0014，213-trial + plate_zero 口径，用户手动跑）
+
+- 日期：2026-09-19
+- 运行目录：`runs/ltc_attn_mix_dfix/`
+- 命令：`python -m gait_grf.train --data-root data/subjectdata --out-dir runs/ltc_attn_mix_dfix --model ltc_attn --cell mix --features kinematic_dyn --ode-unfolds 2 --hidden 128 --layers 2 --dropout 0.3 --epochs 100 --patience 10 --peak-weight 1.0 --device cuda`
+- 配置：= EXP-011 配方，唯一差异 `cell=mix`（官方 MixedCfcCell 移植）；口径 = 新数据口径（213 trial + 力板校零）
+- 注意：**EXP-012（新口径 + 旧细胞基线）未跑**，本实验与 EXP-011 的差异 = 数据修复 + 细胞替换的合并效应，二者无法从本实验单独分离。
+
+### 汇总指标（8 折 mean ± std，ddof=0）
+
+| 指标 | EXP-011（旧口径参照） | EXP-013 |
+|---|---|---|
+| r (resultant) | 0.9365 ± 0.0606 | **0.9648 ± 0.0102** |
+| RMSE %BW (resultant) | 18.07 | **17.73** |
+| r 逐轴 | L_vx 0.868 / L_vy 0.942 / L_vz 0.849 / R_vx 0.774 / R_vy 0.942 / R_vz 0.850 | L_vx **0.905** / L_vy **0.966** / L_vz **0.881** / R_vx 0.789 / R_vy **0.967** / R_vz **0.872** |
+| vy 峰值误差 %BW | L 16.83 / R 17.66 | L 17.96 / **R 20.71（回退）** |
+
+### 逐折（resultant r，Δ 相对 EXP-011）
+
+z1 0.9529(+0.010) / z2 0.9680(+0.009) / z3 0.9687(+0.015) / z4 0.9800(+0.003) / z5 0.9650(−0.001) / z6 0.9548(**−0.011**) / z7 **0.9777(+0.199)** / z8 0.9517(+0.002)
+
+### 观察与结论
+
+1. **z7 破案兑现**：0.778 → 0.978（+0.199），std 0.0606 → 0.0102 收缩 6 倍——z7 不再是离群折，数据层诊断（D1 鞋垫故障排除 + D2 校零）的价值在端到端完整兑现。z7 现在是第二好的折。
+2. **r 0.9648 = 全项目历史新高**（+0.028 vs EXP-011，8 折 6 升 2 降：z6 −0.011 唯一明显回退）；逐轴 6 轴全升，L_vx +0.037 最大。
+3. **R_vx 0.774 → 0.789 仅 +0.015**——混合细胞没有复制 EXP-010/011 对 R_vx 的突破幅度，该轴仍是数据层问题（第四次独立证据）。
+4. **R_vy 峰值误差 17.66 → 20.71 明显回退**（L_vy 16.83 → 17.96 小幅回退）——混合细胞的拟合更「贴均值平滑」还是注意力交互所致待查；λ=2 sweep 优先级保持。
+5. z6 回退 −0.011（本实验唯一明显负向折）：z6 是幅值回归问题折（高 r 高 RMSE），混合细胞未解决反轻微恶化。
+
+## EXP-016 AdamW + weight decay + init gain（issue #0014，同口径，用户手动跑）
+
+- 日期：2026-09-19
+- 运行目录：`runs/ltc_attn_adamw_dfix/`
+- 命令：`python -m gait_grf.train --data-root data/subjectdata --out-dir runs/ltc_attn_adamw_dfix --model ltc_attn --optimizer adamw --weight-decay 1e-4 --init-gain 0.84 --features kinematic_dyn --ode-unfolds 2 --hidden 128 --layers 2 --dropout 0.3 --epochs 100 --patience 10 --peak-weight 1.0 --device cuda`
+- 配置：= EXP-011 配方，差异 = `optimizer=adamw, weight_decay=1e-4, init_gain=0.84`（cell 保持 ltc）
+
+### 汇总指标（8 折 mean ± std，ddof=0）
+
+| 指标 | EXP-011（旧口径参照） | EXP-016 |
+|---|---|---|
+| r (resultant) | 0.9365 ± 0.0606 | **0.9616 ± 0.0082** |
+| RMSE %BW (resultant) | 18.07 | **17.72** |
+| vy 峰值误差 %BW | L 16.83 / R 17.66 | **L 19.93（回退）** / R 16.28 |
+
+### 观察与结论
+
+1. **r 0.9616（+0.025 vs EXP-011），std 0.0082 全场最稳**；逐折 5 升 3 降（z6 −0.018 最大回退）。数据修复贡献为主，训练配方本身在折级与 mix 的直接对比中：EXP-013 0.9648 > EXP-016 0.9616（配对 Δ +0.0033，6/8 折 mix 正向，n=8 配对 t ≈ 1.9，p ≈ 0.10 未显著）。
+2. **注意 EXP-013 与 EXP-016 互相不是单因素对**（mix+adam vs ltc+adamw）：各自 vs EXP-011 也都被数据口径混淆。归因需 EXP-012（新口径旧配方基线）或 EXP-011 checkpoint 的新口径后置评估（免重训，D1-only 口径）。
+3. L_vy 峰值 16.83 → 19.93 回退（EXP-013 是 R_vy 回退）——两个实验各有 vy 峰值代价，λ=2 是共同下一步。
+4. RMSE %BW 17.72 ≈ EXP-013 17.73；两实验几乎并列，但 mix 在 r 与 L_vx/L_vy/R_vy r 上占优。
+
 ---
 
 ## 数据备忘
